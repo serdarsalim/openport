@@ -18,6 +18,7 @@ struct SettingsView: View {
     @AppStorage("terminalFontSize") private var terminalFontSize: Double = 13
     @AppStorage("lastSeenChangelogVersion") private var lastSeenChangelogVersion = ""
     @EnvironmentObject private var terminalStore: TerminalSessionStore
+    @EnvironmentObject private var theme: ThemeController
     @State private var launchAtStartup = false
     @State private var isSettingUp = false
     @State private var setupError: String?
@@ -138,9 +139,32 @@ struct SettingsView: View {
         .padding(.vertical, 12)
     }
 
+    private var appearanceRow: some View {
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Appearance")
+                    .font(.system(size: 13, weight: .medium))
+                Text("Auto follows sunrise and sunset at your location.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Picker("", selection: Binding(get: { theme.mode }, set: { theme.setMode($0) })) {
+                ForEach(ThemeMode.allCases) { mode in
+                    Text(mode.label).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+        }
+    }
+
     private var generalTab: some View {
         VStack(alignment: .leading, spacing: 16) {
             portfolioRow
+            Divider()
+            appearanceRow
             Divider()
             settingRow(
                 title: "Launch at startup",

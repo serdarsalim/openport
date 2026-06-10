@@ -12,6 +12,7 @@ struct LocalhostApp: App {
             ContentView()
                 .environmentObject(appDelegate.model)
                 .environmentObject(appDelegate.terminalStore)
+                .environmentObject(appDelegate.theme)
         }
         .windowResizability(.contentMinSize)
 
@@ -19,6 +20,7 @@ struct LocalhostApp: App {
             SettingsView()
                 .environmentObject(appDelegate.model)
                 .environmentObject(appDelegate.terminalStore)
+                .environmentObject(appDelegate.theme)
         }
         .windowResizability(.contentSize)
 
@@ -33,6 +35,7 @@ struct LocalhostApp: App {
 class AppDelegate: NSObject, NSApplicationDelegate {
     let model = AppModel()
     let terminalStore = TerminalSessionStore()
+    let theme = ThemeController()
     private var statusItem: NSStatusItem?
     private var cancellables = Set<AnyCancellable>()
 

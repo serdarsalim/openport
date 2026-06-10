@@ -5,16 +5,8 @@ import SwiftTerm
 struct ContentView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var terminalStore: TerminalSessionStore
-    @AppStorage("colorScheme") private var schemeRaw: String = "system"
+    @EnvironmentObject private var theme: ThemeController
     @State private var dashboardSearch = ""
-
-    private var preferredScheme: ColorScheme? {
-        switch schemeRaw {
-        case "light": return .light
-        case "dark":  return .dark
-        default:      return nil
-        }
-    }
 
     var body: some View {
         Group {
@@ -24,7 +16,7 @@ struct ContentView: View {
                 VStack(spacing: 0) {
                     TabBarView(store: terminalStore)
                     ZStack {
-                        DashboardView(model: model, schemeRaw: $schemeRaw, searchText: $dashboardSearch)
+                        DashboardView(model: model, searchText: $dashboardSearch)
                             .opacity(terminalStore.selectedTab == .dashboard ? 1 : 0)
                             .allowsHitTesting(terminalStore.selectedTab == .dashboard)
 
@@ -39,7 +31,7 @@ struct ContentView: View {
             }
         }
         .frame(minWidth: 880, minHeight: 480)
-        .preferredColorScheme(preferredScheme)
+        .preferredColorScheme(theme.resolvedScheme)
     }
 }
 
@@ -235,8 +227,8 @@ struct WelcomeView: View {
 
 struct DashboardView: View {
     @ObservedObject var model: AppModel
-    @Binding var schemeRaw: String
     @Binding var searchText: String
+    @EnvironmentObject private var theme: ThemeController
     @Environment(\.openWindow) private var openWindow
     @State private var showWhatsNew = false
     @AppStorage("goLinksEnabled") private var goLinksEnabled = false
@@ -249,6 +241,10 @@ struct DashboardView: View {
     private var filteredApps: [DevApp] {
         guard !searchText.isEmpty else { return model.apps }
         return model.apps.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
+    }
+
+    private var appearanceBinding: Binding<ThemeMode> {
+        Binding(get: { theme.mode }, set: { theme.setMode($0) })
     }
 
     var body: some View {
@@ -310,10 +306,21 @@ struct DashboardView: View {
                 }
             }
 
-            footerIcon(schemeRaw == "dark" ? "moon.fill" : "sun.max.fill",
-                       help: schemeRaw == "dark" ? "Switch to light mode" : "Switch to dark mode") {
-                schemeRaw = schemeRaw == "dark" ? "light" : "dark"
+            Menu {
+                Picker("Appearance", selection: appearanceBinding) {
+                    ForEach(ThemeMode.allCases) { mode in
+                        Label(mode.label, systemImage: mode.symbol).tag(mode)
+                    }
+                }
+                .pickerStyle(.inline)
+            } label: {
+                Image(systemName: theme.mode.symbol)
             }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .foregroundStyle(.secondary)
+            .help("Appearance — \(theme.mode.label)")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)

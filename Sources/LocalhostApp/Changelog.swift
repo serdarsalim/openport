@@ -12,6 +12,13 @@ enum Changelog {
     /// Date format: yyyy-MM-dd.
     static let entries: [ChangelogEntry] = [
         ChangelogEntry(
+            version: "1.2.0",
+            date: "2026-06-10",
+            items: [
+                "Auto appearance — a new Light / Dark / Auto control where Auto follows the sun at your location, flipping to dark at local sunset and back at sunrise. No geolocation prompt; it derives your coordinates from the system timezone. Pick it from the appearance menu in the footer or Settings → General."
+            ]
+        ),
+        ChangelogEntry(
             version: "1.1.0",
             date: "2026-05-07",
             items: [
