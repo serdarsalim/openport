@@ -18,7 +18,8 @@ enum Changelog {
                 "Auto appearance — a new Light / Dark / Auto control where Auto follows the sun at your location, flipping to dark at local sunset and back at sunrise. No geolocation prompt; it derives your coordinates from the system timezone. Pick it from the appearance menu in the footer or Settings → General.",
                 "Backend awareness — OpenPort now detects when a project has a Convex or Supabase backend, whether the dev script already starts it, and whether it's a local process or a cloud connection. Each row shows a backend line under the app name with live status, and warns when a local backend has nothing to start it.",
                 "dev:backend sidecar — when a project splits its frontend and backend into separate scripts, Run starts both so the frontend doesn't boot alone with failing data calls.",
-                "Node version pinning — respects a project's .nvmrc / .node-version when launching, and drops Convex projects to a compatible Node when your default is too new, so the local backend stops failing to deploy \"use node\" actions silently."
+                "Node version pinning — respects a project's .nvmrc / .node-version when launching, and drops Convex projects to a compatible Node when your default is too new, so the local backend stops failing to deploy \"use node\" actions silently.",
+                "Readable logs — the live logs viewer now strips ANSI color codes, so output (and especially errors when a server won't start) reads as clean plain text instead of [36m / [2m noise."
             ]
         ),
         ChangelogEntry(
