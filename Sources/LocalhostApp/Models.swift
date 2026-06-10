@@ -8,6 +8,19 @@ enum PortStatus: Sendable, Hashable {
     case crashed   // we started it but it stopped responding
 }
 
+/// A managed backend that a project depends on alongside its frontend.
+enum BackendKind: String, Sendable, Hashable {
+    case convex
+    case supabase
+
+    var label: String {
+        switch self {
+        case .convex:   return "Convex"
+        case .supabase: return "Supabase"
+        }
+    }
+}
+
 struct DevApp: Identifiable, Sendable, Hashable {
     var id: String { name }
     let name: String
@@ -20,9 +33,22 @@ struct DevApp: Identifiable, Sendable, Hashable {
     var gitStatus: GitStatus
     var devScript: String?           // raw dev script string, used to patch port at launch
     var devScriptName: String?       // npm script name to invoke (e.g. "dev" or "dev:frontend")
-    var backendScriptName: String?   // optional sibling script to spawn (e.g. "dev:backend")
-    var hasBackend: Bool { backendScriptName != nil }
-    var backendRunning: Bool = false // true when we've spawned the backend sidecar
+
+    // Backend (Convex / Supabase) the project needs running with the frontend.
+    var backendKind: BackendKind? = nil  // detected backend, if any
+    var backendBundled: Bool = false     // the frontend dev script already starts the backend
+    var backendNeedsLocal: Bool = false  // backend runs as a local process (Convex local / Supabase docker)
+    var backendCommand: String? = nil    // sidecar command we run when the backend isn't bundled
+    var backendRunning: Bool = false     // true when we've spawned the backend sidecar
+    var nodeNote: String? = nil          // which Node we pin for this app (e.g. ".nvmrc → 20", "Convex compat")
+
+    var hasBackend: Bool { backendKind != nil }
+    /// We need to spawn the backend ourselves: it exists, isn't bundled into dev, runs locally,
+    /// and we resolved a command for it.
+    var needsSidecar: Bool { hasBackend && !backendBundled && backendNeedsLocal && backendCommand != nil }
+    /// Backend exists and runs locally but nothing will start it on Run — the "only frontend" trap.
+    var backendUnstarted: Bool { hasBackend && !backendBundled && backendNeedsLocal && backendCommand == nil }
+
     var crashLog: String? = nil     // last stderr output captured on unexpected exit
     var extraPorts: [DetectedPort] = [] // additional ports bound by this app's cwd
 }

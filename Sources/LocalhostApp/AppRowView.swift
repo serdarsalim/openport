@@ -55,12 +55,60 @@ struct AppRowView: View {
     }
 
     private var appName: some View {
-        HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: 1) {
             Text(app.name)
                 .fontWeight(.medium)
                 .foregroundStyle(.primary)
+            if app.hasBackend {
+                backendChip
+            }
         }
         .frame(minWidth: goLinksEnabled ? 200 : 280, alignment: .leading)
+    }
+
+    /// (label, color, isWarning) for the backend's current state.
+    private var backendStatus: (text: String, color: Color) {
+        let isActive = app.isRunning || app.portStatus == .detached
+        if let kind = app.backendKind, kind == .supabase && !app.backendNeedsLocal {
+            return ("cloud", .secondary)            // hosted Supabase — no local process
+        }
+        if app.backendUnstarted {
+            return ("won't start", .orange)         // local backend nothing launches — the trap
+        }
+        if app.backendBundled {
+            return (isActive ? "running" : "bundled", isActive ? .green : .secondary)
+        }
+        if app.needsSidecar {
+            return (app.backendRunning ? "running" : "auto-start", app.backendRunning ? .green : .secondary)
+        }
+        return (isActive ? "running" : "idle", isActive ? .green : .secondary)
+    }
+
+    private var backendChip: some View {
+        let status = backendStatus
+        return HStack(spacing: 4) {
+            Image(systemName: "server.rack")
+                .font(.system(size: 8))
+                .foregroundStyle(.tertiary)
+            Text(app.backendKind?.label ?? "Backend")
+                .foregroundStyle(.secondary)
+            Text("·").foregroundStyle(.tertiary)
+            Text(status.text)
+                .foregroundStyle(status.color)
+        }
+        .font(.system(size: 10))
+        .help(backendHelp)
+    }
+
+    private var backendHelp: String {
+        guard let kind = app.backendKind else { return "" }
+        var parts = ["\(kind.label) backend"]
+        if app.backendBundled { parts.append("started by the dev script") }
+        else if app.needsSidecar { parts.append("OpenPort runs \(app.backendCommand ?? "it") alongside the app") }
+        else if app.backendUnstarted { parts.append("nothing starts it on Run — only the frontend will boot") }
+        else if !app.backendNeedsLocal { parts.append("hosted in the cloud, no local process") }
+        if let note = app.nodeNote { parts.append(note) }
+        return parts.joined(separator: " · ")
     }
 
     private var hasMultiPortInfo: Bool {
@@ -534,23 +582,50 @@ struct MultiPortPopover: View {
                 portRow(port: extra.port, command: extra.command, isPrimary: false)
             }
 
-            if app.hasBackend {
+            if let kind = app.backendKind {
                 Divider().padding(.vertical, 2)
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(app.backendRunning ? Color.green : Color.secondary.opacity(0.35))
-                        .frame(width: 6, height: 6)
-                    Text("Backend script: \(app.backendScriptName ?? "")")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text(app.backendRunning ? "running" : "idle")
-                        .font(.caption)
-                        .foregroundStyle(app.backendRunning ? .green : .secondary)
-                }
+                backendSection(kind: kind)
             }
         }
         .padding(14)
         .frame(width: 380)
+    }
+
+    @ViewBuilder
+    private func backendSection(kind: BackendKind) -> some View {
+        let isActive = app.isRunning || app.portStatus == .detached
+        let (statusText, statusColor, running): (String, Color, Bool) = {
+            if kind == .supabase && !app.backendNeedsLocal { return ("cloud — no local process", .secondary, false) }
+            if app.backendUnstarted { return ("not started — only the frontend runs", .orange, false) }
+            if app.backendBundled { return (isActive ? "running (started by dev)" : "starts with dev", isActive ? .green : .secondary, isActive) }
+            if app.needsSidecar { return (app.backendRunning ? "running (auto-started)" : "auto-starts with app", app.backendRunning ? .green : .secondary, app.backendRunning) }
+            return (isActive ? "running" : "idle", isActive ? .green : .secondary, isActive)
+        }()
+
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(running ? Color.green : statusColor.opacity(0.4))
+                    .frame(width: 6, height: 6)
+                Text("\(kind.label) backend")
+                    .font(.caption)
+                    .fontWeight(.medium)
+                Spacer()
+                Text(statusText)
+                    .font(.caption)
+                    .foregroundStyle(statusColor)
+            }
+            if let command = app.backendCommand {
+                Text(command)
+                    .font(.system(.caption2, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+            }
+            if let note = app.nodeNote {
+                Text(note)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+        }
     }
 
     @ViewBuilder

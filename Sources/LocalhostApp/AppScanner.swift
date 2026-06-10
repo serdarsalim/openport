@@ -15,7 +15,10 @@ struct AppScanner: Sendable {
         let scriptPort: Int?
         let devScript: String?
         let devScriptName: String?      // npm script name to run for the frontend (dev or dev:frontend)
-        let backendScriptName: String?  // optional sibling script (dev:backend) to spawn alongside
+        let backendKind: BackendKind?   // Convex / Supabase, if the project has one
+        let backendBundled: Bool        // the frontend dev script already starts the backend
+        let backendNeedsLocal: Bool     // backend runs as a local process (vs a cloud connection)
+        let backendCommand: String?     // sidecar command to spawn when the backend isn't bundled
     }
 
     /// Returns app names and any port hardcoded in their dev script.
@@ -52,19 +55,82 @@ struct AppScanner: Sendable {
                 return nil
             }
 
-            // Only spawn dev:backend separately when the frontend script doesn't already orchestrate it.
-            let backendScriptName: String? = (devScriptName == "dev:frontend" && scripts["dev:backend"] != nil)
-                ? "dev:backend"
-                : nil
+            let backend = detectBackend(in: url, devScript: devScript, scripts: scripts)
 
             return ScannedApp(
                 name: name,
                 scriptPort: extractPort(from: devScript),
                 devScript: devScript,
                 devScriptName: devScriptName,
-                backendScriptName: backendScriptName
+                backendKind: backend.kind,
+                backendBundled: backend.bundled,
+                backendNeedsLocal: backend.needsLocal,
+                backendCommand: backend.command
             )
         }.sorted { $0.name < $1.name }
+    }
+
+    private struct BackendInfo {
+        var kind: BackendKind?
+        var bundled: Bool
+        var needsLocal: Bool
+        var command: String?
+    }
+
+    /// Works out whether a project depends on a Convex/Supabase backend, whether its
+    /// frontend `dev` script already launches it, whether that backend runs as a local
+    /// process, and (if we must start it ourselves) the command to run.
+    private func detectBackend(in url: URL, devScript: String, scripts: [String: Any]) -> BackendInfo {
+        let fm = FileManager.default
+        let hasConvex = fm.fileExists(atPath: url.appendingPathComponent("convex").path)
+        let hasSupabase = fm.fileExists(atPath: url.appendingPathComponent("supabase").path)
+
+        let kind: BackendKind? = hasConvex ? .convex : (hasSupabase ? .supabase : nil)
+        guard let kind else { return BackendInfo(kind: nil, bundled: false, needsLocal: false, command: nil) }
+
+        let env = readEnv(in: url)
+
+        switch kind {
+        case .convex:
+            // `convex dev` is always a local watcher process — needed whether it deploys to a
+            // local open-source backend or to the cloud. Bundled when dev already runs it.
+            let bundled = devScript.contains("convex dev") || devScript.contains("convex ")
+            let command: String? = bundled
+                ? nil
+                : (scripts["dev:backend"] != nil ? "npm run dev:backend" : "npx convex dev")
+            return BackendInfo(kind: .convex, bundled: bundled, needsLocal: true, command: command)
+
+        case .supabase:
+            // Cloud Supabase (https URL) needs no local process — only `supabase start` (local
+            // docker, URL on localhost) does.
+            let url = (env["SUPABASE_URL"] ?? env["NEXT_PUBLIC_SUPABASE_URL"] ?? "")
+            let needsLocal = url.contains("localhost") || url.contains("127.0.0.1")
+            let bundled = devScript.contains("supabase start") || devScript.contains("supabase ")
+            let command: String? = (needsLocal && !bundled)
+                ? (scripts["dev:backend"] != nil ? "npm run dev:backend" : "npx supabase start")
+                : nil
+            return BackendInfo(kind: .supabase, bundled: bundled, needsLocal: needsLocal, command: command)
+        }
+    }
+
+    /// Shallow parse of .env.local then .env into a key→value map. First file wins.
+    private func readEnv(in url: URL) -> [String: String] {
+        var result: [String: String] = [:]
+        for file in [".env.local", ".env"] {
+            let path = url.appendingPathComponent(file)
+            guard let text = try? String(contentsOf: path, encoding: .utf8) else { continue }
+            for rawLine in text.split(separator: "\n") {
+                let line = rawLine.trimmingCharacters(in: .whitespaces)
+                guard !line.hasPrefix("#"), let eq = line.firstIndex(of: "=") else { continue }
+                let key = String(line[..<eq]).trimmingCharacters(in: .whitespaces)
+                var value = String(line[line.index(after: eq)...]).trimmingCharacters(in: .whitespaces)
+                // Strip surrounding quotes and any trailing inline comment.
+                if let hash = value.firstIndex(of: "#") { value = String(value[..<hash]).trimmingCharacters(in: .whitespaces) }
+                value = value.trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+                if result[key] == nil { result[key] = value }
+            }
+        }
+        return result
     }
 
     /// Parses -p 3001 / --port 3001 / --port=3001 from a dev script string.

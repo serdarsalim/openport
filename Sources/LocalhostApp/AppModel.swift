@@ -59,10 +59,7 @@ final class AppModel: ObservableObject {
             guard let n = item.devScriptName else { return nil }
             return (item.name, n)
         })
-        let backendScriptNames = Dictionary(uniqueKeysWithValues: scanned.compactMap { item -> (String, String)? in
-            guard let n = item.backendScriptName else { return nil }
-            return (item.name, n)
-        })
+        let scannedByName = Dictionary(uniqueKeysWithValues: scanned.map { ($0.name, $0) })
         let ports = portStore.assign(to: appNames, scriptPorts: scriptPorts)
         let goAliases = goLinkStore.load()
         let runningNames = Set(appNames.filter { processManager.isRunning(name: $0) })
@@ -133,6 +130,12 @@ final class AppModel: ObservableObject {
                 status = .free; detectedPort = nil; externalPID = nil
             }
 
+            let scannedApp = scannedByName[name]
+            let nodeNote: String? = NodeResolver.resolve(
+                directory: root.appendingPathComponent(name),
+                convexCompat: scannedApp?.backendKind == .convex
+            )?.note
+
             return DevApp(
                 name: name,
                 port: assignedPort,
@@ -144,8 +147,12 @@ final class AppModel: ObservableObject {
                 gitStatus: gitStatuses[name] ?? .unknown,
                 devScript: devScripts[name],
                 devScriptName: devScriptNames[name],
-                backendScriptName: backendScriptNames[name],
+                backendKind: scannedApp?.backendKind,
+                backendBundled: scannedApp?.backendBundled ?? false,
+                backendNeedsLocal: scannedApp?.backendNeedsLocal ?? false,
+                backendCommand: scannedApp?.backendCommand,
                 backendRunning: processManager.isBackendRunning(name: name),
+                nodeNote: nodeNote,
                 extraPorts: extras
             )
         }
@@ -209,12 +216,13 @@ final class AppModel: ObservableObject {
             in: root.appendingPathComponent(app.name),
             devScript: app.devScript,
             devScriptName: app.devScriptName,
-            backendScriptName: app.backendScriptName
+            backendCommand: app.needsSidecar ? app.backendCommand : nil,
+            convexCompat: app.backendKind == .convex
         )
         update(app.name) {
             $0.isRunning = true
             $0.portStatus = .running
-            $0.backendRunning = app.backendScriptName != nil
+            $0.backendRunning = app.needsSidecar
         }
         refreshProxyRoutes()
     }

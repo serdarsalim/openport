@@ -15,7 +15,10 @@ enum Changelog {
             version: "1.2.0",
             date: "2026-06-10",
             items: [
-                "Auto appearance — a new Light / Dark / Auto control where Auto follows the sun at your location, flipping to dark at local sunset and back at sunrise. No geolocation prompt; it derives your coordinates from the system timezone. Pick it from the appearance menu in the footer or Settings → General."
+                "Auto appearance — a new Light / Dark / Auto control where Auto follows the sun at your location, flipping to dark at local sunset and back at sunrise. No geolocation prompt; it derives your coordinates from the system timezone. Pick it from the appearance menu in the footer or Settings → General.",
+                "Backend awareness — OpenPort now detects when a project has a Convex or Supabase backend, whether the dev script already starts it, and whether it's a local process or a cloud connection. Each row shows a backend line under the app name with live status.",
+                "Auto-start backends — when an app has a local backend that its dev script doesn't launch, OpenPort runs it for you (npm run dev:backend, or npx convex dev / supabase start) so Run boots the whole stack instead of just the frontend.",
+                "Node version pinning — respects a project's .nvmrc / .node-version when launching, and drops Convex projects to a compatible Node when your default is too new, so the local backend stops failing to deploy \"use node\" actions silently."
             ]
         ),
         ChangelogEntry(

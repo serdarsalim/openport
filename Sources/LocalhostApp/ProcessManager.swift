@@ -16,11 +16,12 @@ final class ProcessManager {
         in directory: URL,
         devScript: String? = nil,
         devScriptName: String? = nil,
-        backendScriptName: String? = nil
+        backendCommand: String? = nil,
+        convexCompat: Bool = false
     ) {
         guard !(running[name]?.isRunning == true) else { return }
 
-        let env = baseEnvironment(port: port, directory: directory)
+        let env = baseEnvironment(port: port, directory: directory, convexCompat: convexCompat)
         let scriptName = devScriptName ?? "dev"
 
         let command: String
@@ -58,9 +59,8 @@ final class ProcessManager {
             }
         }
 
-        if let backendName = backendScriptName {
-            let backendCommand = "exec npm run \(backendName)"
-            let backend = makeProcess(directory: directory, env: env, command: backendCommand, logBuffer: buffer)
+        if let backendCommand {
+            let backend = makeProcess(directory: directory, env: env, command: "exec \(backendCommand)", logBuffer: buffer)
             backend.terminationHandler = { [weak self, name] _ in
                 Task { @MainActor [weak self] in
                     self?.backends.removeValue(forKey: name)
@@ -136,12 +136,17 @@ final class ProcessManager {
         logBuffers[name]?.clear()
     }
 
-    private func baseEnvironment(port: Int, directory: URL) -> [String: String] {
+    private func baseEnvironment(port: Int, directory: URL, convexCompat: Bool) -> [String: String] {
         var env = ProcessInfo.processInfo.environment
         env["PORT"] = "\(port)"
         env["VITE_PORT"] = "\(port)"
         let localBin = directory.appendingPathComponent("node_modules/.bin").path
-        let extraPaths = "\(localBin):/opt/homebrew/bin:/usr/local/bin"
+        // A pinned (.nvmrc) or Convex-compatible Node goes ahead of the Homebrew default so
+        // `node`/`npm`/`npx` resolve to the right version for this project.
+        let nodeBin = NodeResolver.resolve(directory: directory, convexCompat: convexCompat)?.binDir
+        let extraPaths = [localBin, nodeBin, "/opt/homebrew/bin", "/usr/local/bin"]
+            .compactMap { $0 }
+            .joined(separator: ":")
         env["PATH"] = "\(extraPaths):\(env["PATH"] ?? "/usr/bin:/bin")"
         return env
     }
