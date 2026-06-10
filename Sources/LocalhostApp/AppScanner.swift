@@ -90,25 +90,26 @@ struct AppScanner: Sendable {
 
         let env = readEnv(in: url)
 
+        // We only run a backend you've actually declared via a `dev:backend` script. We never
+        // invent `npx convex dev` / `supabase start` — if a local backend has nothing to start
+        // it and dev doesn't bundle it, we warn instead of magicking a process into existence.
+        let hasBackendScript = scripts["dev:backend"] != nil
+
         switch kind {
         case .convex:
-            // `convex dev` is always a local watcher process — needed whether it deploys to a
-            // local open-source backend or to the cloud. Bundled when dev already runs it.
+            // `convex dev` is a local watcher process — needed whether it deploys to a local
+            // open-source backend or the cloud. Bundled when dev already runs it.
             let bundled = devScript.contains("convex dev") || devScript.contains("convex ")
-            let command: String? = bundled
-                ? nil
-                : (scripts["dev:backend"] != nil ? "npm run dev:backend" : "npx convex dev")
+            let command = (!bundled && hasBackendScript) ? "npm run dev:backend" : nil
             return BackendInfo(kind: .convex, bundled: bundled, needsLocal: true, command: command)
 
         case .supabase:
-            // Cloud Supabase (https URL) needs no local process — only `supabase start` (local
-            // docker, URL on localhost) does.
+            // Cloud Supabase (https URL) needs no local process — only local docker
+            // (URL on localhost) does.
             let url = (env["SUPABASE_URL"] ?? env["NEXT_PUBLIC_SUPABASE_URL"] ?? "")
             let needsLocal = url.contains("localhost") || url.contains("127.0.0.1")
             let bundled = devScript.contains("supabase start") || devScript.contains("supabase ")
-            let command: String? = (needsLocal && !bundled)
-                ? (scripts["dev:backend"] != nil ? "npm run dev:backend" : "npx supabase start")
-                : nil
+            let command = (needsLocal && !bundled && hasBackendScript) ? "npm run dev:backend" : nil
             return BackendInfo(kind: .supabase, bundled: bundled, needsLocal: needsLocal, command: command)
         }
     }
