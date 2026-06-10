@@ -204,11 +204,24 @@ final class LogBuffer: @unchecked Sendable {
     private let maxLines = 1000
 
     func append(_ text: String) {
-        let incoming = text.components(separatedBy: "\n").filter { !$0.isEmpty }
+        let incoming = LogBuffer.stripANSI(text).components(separatedBy: "\n").filter { !$0.isEmpty }
         lock.lock()
         lines.append(contentsOf: incoming)
         if lines.count > maxLines { lines.removeFirst(lines.count - maxLines) }
         lock.unlock()
+    }
+
+    // dev servers emit ANSI escapes (colors, cursor moves, hyperlinks). We render plain text,
+    // so strip them at the source — otherwise the logs you read to debug a failed Run are
+    // littered with [36m / [2m noise, and so is captured crash output.
+    private static let ansiRegex = try? NSRegularExpression(
+        pattern: "\\u001B(?:\\[[0-9;?]*[ -/]*[@-~]|\\][^\\u0007\\u001B]*(?:\\u0007|\\u001B\\\\))"
+    )
+
+    static func stripANSI(_ text: String) -> String {
+        guard let regex = ansiRegex else { return text }
+        let range = NSRange(text.startIndex..., in: text)
+        return regex.stringByReplacingMatches(in: text, range: range, withTemplate: "")
     }
 
     func snapshot() -> String? {
