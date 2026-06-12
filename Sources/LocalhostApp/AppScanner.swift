@@ -97,11 +97,17 @@ struct AppScanner: Sendable {
 
         switch kind {
         case .convex:
-            // `convex dev` is a local watcher process — needed whether it deploys to a local
-            // open-source backend or the cloud. Bundled when dev already runs it.
+            // A local open-source backend (CONVEX_DEPLOYMENT local:/anonymous:, or a localhost
+            // URL) runs as a process we must launch. Cloud dev/prod deployments need no local
+            // process — the frontend talks straight to the *.convex.cloud URL and data works
+            // without `convex dev` (that watcher only hot-pushes code changes, which dev can bundle).
+            let convexURL = env["NEXT_PUBLIC_CONVEX_URL"] ?? env["CONVEX_URL"] ?? ""
+            let deployment = env["CONVEX_DEPLOYMENT"] ?? ""
+            let needsLocal = convexURL.contains("localhost") || convexURL.contains("127.0.0.1")
+                || deployment.hasPrefix("local:") || deployment.hasPrefix("anonymous:")
             let bundled = devScript.contains("convex dev") || devScript.contains("convex ")
-            let command = (!bundled && hasBackendScript) ? "npm run dev:backend" : nil
-            return BackendInfo(kind: .convex, bundled: bundled, needsLocal: true, command: command)
+            let command = (needsLocal && !bundled && hasBackendScript) ? "npm run dev:backend" : nil
+            return BackendInfo(kind: .convex, bundled: bundled, needsLocal: needsLocal, command: command)
 
         case .supabase:
             // Cloud Supabase (https URL) needs no local process — only local docker

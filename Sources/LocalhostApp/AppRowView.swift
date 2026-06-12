@@ -69,8 +69,8 @@ struct AppRowView: View {
     /// (label, color, isWarning) for the backend's current state.
     private var backendStatus: (text: String, color: Color) {
         let isActive = app.isRunning || app.portStatus == .detached
-        if let kind = app.backendKind, kind == .supabase && !app.backendNeedsLocal {
-            return ("cloud", .secondary)            // hosted Supabase — no local process
+        if app.hasBackend && !app.backendNeedsLocal && !app.backendBundled {
+            return ("cloud", .secondary)            // hosted backend (Convex/Supabase cloud) — no local process
         }
         if app.backendUnstarted {
             return ("won't start", .orange)         // local backend nothing launches — the trap

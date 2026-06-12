@@ -12,6 +12,13 @@ enum Changelog {
     /// Date format: yyyy-MM-dd.
     static let entries: [ChangelogEntry] = [
         ChangelogEntry(
+            version: "1.2.1",
+            date: "2026-06-12",
+            items: [
+                "Cloud Convex no longer mislabeled \"won't start\" — a project pointed at a *.convex.cloud dev or prod deployment now shows \"cloud\" like hosted Supabase, since its data lives in the cloud and there's no local process to launch. Only local deployments (CONVEX_DEPLOYMENT local:/anonymous:, or a localhost URL) still expect a backend process, so the warning fires only when it's real."
+            ]
+        ),
+        ChangelogEntry(
             version: "1.2.0",
             date: "2026-06-10",
             items: [
