@@ -51,14 +51,15 @@ enum SystemClient {
         NSWorkspace.shared.open(url)
     }
 
-    static func isPortListening(_ port: Int) -> Bool {
+    static func isPortListening(_ port: Int, host: String = "127.0.0.1") -> Bool {
+        let target = host == "localhost" ? "127.0.0.1" : host
         let sock = Darwin.socket(AF_INET, SOCK_STREAM, 0)
         guard sock >= 0 else { return false }
         defer { Darwin.close(sock) }
         var addr = sockaddr_in()
         addr.sin_family = sa_family_t(AF_INET)
         addr.sin_port = in_port_t(port).byteSwapped
-        addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+        addr.sin_addr.s_addr = inet_addr(target)
         return withUnsafePointer(to: &addr) {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
                 Darwin.connect(sock, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) == 0

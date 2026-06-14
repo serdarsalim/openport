@@ -17,7 +17,7 @@ struct AppRowView: View {
     @AppStorage("goLinksEnabled") private var goLinksEnabled = false
     @AppStorage("showActionBrowser") private var showActionBrowser = true
     @AppStorage("showActionCopy") private var showActionCopy = true
-    @AppStorage("showActionQR") private var showActionQR = true
+    @AppStorage("showActionQR") private var showActionQR = false
     @AppStorage("showActionTerminal") private var showActionTerminal = true
     @AppStorage("showActionEditor") private var showActionEditor = true
     @AppStorage("showActionFinder") private var showActionFinder = true

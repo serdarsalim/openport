@@ -12,6 +12,15 @@ enum Changelog {
     /// Date format: yyyy-MM-dd.
     static let entries: [ChangelogEntry] = [
         ChangelogEntry(
+            version: "1.3.0",
+            date: "2026-06-14",
+            items: [
+                "LAN Launcher — flip on the Wi-Fi icon in the footer (or Settings → LAN Launcher) and OpenPort serves a phone-friendly page at port 1453 that lists every app with a tap-to-open link built from your Mac's Wi-Fi IP, a live running / stopped / localhost-only dot per app, and Run / Stop buttons so you can start an app from your phone. Clicking the footer icon reveals a QR code pointing at the launcher itself, so you can pull it up on a device in the first place.",
+                "Auto-expose on Run — while the launcher is on, apps you Run from OpenPort bind to all interfaces automatically (Vite --host, Next -H 0.0.0.0, CRA HOST=0.0.0.0), so the links actually work from your phone without editing each dev script. Apps already running bound to localhost are flagged \"localhost-only\" on the page with a nudge to relaunch from OpenPort.",
+                "1453 — OpenPort's own standard port. You know why."
+            ]
+        ),
+        ChangelogEntry(
             version: "1.2.1",
             date: "2026-06-12",
             items: [

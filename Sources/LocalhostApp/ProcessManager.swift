@@ -17,19 +17,26 @@ final class ProcessManager {
         devScript: String? = nil,
         devScriptName: String? = nil,
         backendCommand: String? = nil,
-        convexCompat: Bool = false
+        convexCompat: Bool = false,
+        bindHost: Bool = false
     ) {
         guard !(running[name]?.isRunning == true) else { return }
 
-        let env = baseEnvironment(port: port, directory: directory, convexCompat: convexCompat)
+        let framework = Self.detectFramework(devScript: devScript)
+        let env = baseEnvironment(port: port, directory: directory, convexCompat: convexCompat,
+                                  bindHost: bindHost, framework: framework)
         let scriptName = devScriptName ?? "dev"
 
-        let command: String
+        // When bindHost is on, expose the dev server on all interfaces so phones on the LAN
+        // can reach it. The lever is framework-specific: Vite/Next take a flag, CRA reads HOST.
+        let base: String
+        let viaNpm: Bool
         if let script = devScript, script.contains("-p") || script.contains("--port") {
-            command = "exec \(patchPort(in: script, to: port))"
+            base = patchPort(in: script, to: port); viaNpm = false
         } else {
-            command = "exec npm run \(scriptName)"
+            base = "npm run \(scriptName)"; viaNpm = true
         }
+        let command = "exec \(bindHost ? Self.applyHostBinding(to: base, framework: framework, viaNpm: viaNpm) : base)"
 
         // Clear any previous crash log when restarting.
         crashLogs.removeValue(forKey: name)
@@ -136,10 +143,43 @@ final class ProcessManager {
         logBuffers[name]?.clear()
     }
 
-    private func baseEnvironment(port: Int, directory: URL, convexCompat: Bool) -> [String: String] {
+    /// Frameworks we know how to expose on the LAN. `unknown` falls back to the HOST env var.
+    enum Framework { case next, vite, cra, unknown }
+
+    static func detectFramework(devScript: String?) -> Framework {
+        guard let s = devScript?.lowercased() else { return .unknown }
+        if s.contains("next") { return .next }
+        if s.contains("vite") { return .vite }
+        if s.contains("react-scripts") { return .cra }
+        return .unknown
+    }
+
+    /// Append the right host flag for the framework. Vite and Next take a CLI flag (passed
+    /// through `npm run … --` when invoked via npm); CRA/unknown rely on the HOST env var.
+    static func applyHostBinding(to command: String, framework: Framework, viaNpm: Bool) -> String {
+        switch framework {
+        case .vite:
+            if command.contains("--host") { return command }
+            return viaNpm ? "\(command) -- --host" : "\(command) --host"
+        case .next:
+            if command.contains("-H ") || command.contains("--hostname") { return command }
+            return viaNpm ? "\(command) -- -H 0.0.0.0" : "\(command) -H 0.0.0.0"
+        case .cra, .unknown:
+            return command  // handled via HOST in the environment
+        }
+    }
+
+    private func baseEnvironment(port: Int, directory: URL, convexCompat: Bool,
+                                 bindHost: Bool = false, framework: Framework = .unknown) -> [String: String] {
         var env = ProcessInfo.processInfo.environment
         env["PORT"] = "\(port)"
         env["VITE_PORT"] = "\(port)"
+        // CRA's react-scripts and many webpack-based servers bind all interfaces when HOST is set.
+        // Only set it for those — Vite/Next get a CLI flag instead, and some apps read process.env.HOST
+        // for their own logic, so we don't clobber it needlessly.
+        if bindHost, framework == .cra || framework == .unknown {
+            env["HOST"] = "0.0.0.0"
+        }
         let localBin = directory.appendingPathComponent("node_modules/.bin").path
         // A pinned (.nvmrc) or Convex-compatible Node goes ahead of the Homebrew default so
         // `node`/`npm`/`npx` resolve to the right version for this project.

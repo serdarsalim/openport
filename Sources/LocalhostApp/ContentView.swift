@@ -231,7 +231,9 @@ struct DashboardView: View {
     @EnvironmentObject private var theme: ThemeController
     @Environment(\.openWindow) private var openWindow
     @State private var showWhatsNew = false
+    @State private var showLauncher = false
     @AppStorage("goLinksEnabled") private var goLinksEnabled = false
+    @AppStorage("launcherEnabled") private var launcherEnabled = false
     @AppStorage("lastSeenChangelogVersion") private var lastSeenChangelogVersion = ""
 
     private var hasUnseenChangelog: Bool {
@@ -292,6 +294,16 @@ struct DashboardView: View {
                 .opacity(model.isLoading ? 1 : 0)
 
             Spacer()
+
+            Button { showLauncher.toggle() } label: {
+                Image(systemName: "wifi")
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(launcherEnabled ? Color.green : .secondary)
+            .help(launcherEnabled ? "LAN Launcher — on" : "LAN Launcher")
+            .popover(isPresented: $showLauncher, arrowEdge: .bottom) {
+                LauncherPopover(model: model)
+            }
 
             footerIcon("questionmark.circle", help: "Help") { openWindow(id: "help") }
 
@@ -397,6 +409,51 @@ struct DashboardView: View {
         .listRowSeparator(.hidden)
         .listRowBackground(Color.clear)
         .allowsHitTesting(false)
+    }
+}
+
+/// Footer popover for the LAN Launcher — toggle it on and grab the QR / URL to pull the
+/// page up on a phone. Mirrors the Settings → LAN Launcher section; both bind the same key.
+private struct LauncherPopover: View {
+    @ObservedObject var model: AppModel
+    @AppStorage("launcherEnabled") private var launcherEnabled = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "wifi").foregroundStyle(.secondary)
+                Text("LAN Launcher").font(.headline)
+                Spacer()
+                Toggle("", isOn: $launcherEnabled)
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .labelsHidden()
+                    .onChange(of: launcherEnabled) { _, enabled in
+                        model.setLauncherEnabled(enabled)
+                    }
+            }
+
+            if launcherEnabled {
+                Divider()
+                QRPopover(port: Int(LauncherServer.port))
+                Button("Open in browser") {
+                    if let url = URL(string: model.launcherURL) { NSWorkspace.shared.open(url) }
+                }
+                .controlSize(.small)
+                .frame(maxWidth: .infinity, alignment: .center)
+                Text("Open any app from a phone or tablet on this Wi-Fi. Apps you Run are auto-exposed on the LAN.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text("Turn on to open your apps from your phone — one page, live status, tap to launch.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(16)
+        .frame(width: 244)
     }
 }
 

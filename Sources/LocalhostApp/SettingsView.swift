@@ -6,9 +6,10 @@ struct SettingsView: View {
     @AppStorage("menuBarQuickLaunch") private var menuBarQuickLaunch = false
     @AppStorage("goLinksEnabled") private var goLinksEnabled = false
     @AppStorage("goLinksSystemSetup") private var goLinksSystemSetup = false
+    @AppStorage("launcherEnabled") private var launcherEnabled = false
     @AppStorage("showActionBrowser") private var showActionBrowser = true
     @AppStorage("showActionCopy") private var showActionCopy = true
-    @AppStorage("showActionQR") private var showActionQR = true
+    @AppStorage("showActionQR") private var showActionQR = false
     @AppStorage("showActionTerminal") private var showActionTerminal = true
     @AppStorage("showActionEditor") private var showActionEditor = true
     @AppStorage("showActionFinder") private var showActionFinder = true
@@ -28,12 +29,13 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
 
     enum SettingsSection: String, CaseIterable, Identifiable {
-        case general, goLinks, terminal, rows
+        case general, goLinks, launcher, terminal, rows
         var id: String { rawValue }
         var title: String {
             switch self {
             case .general: return "General"
             case .goLinks: return "go/ links"
+            case .launcher: return "LAN Launcher"
             case .terminal: return "Terminal"
             case .rows: return "Rows"
             }
@@ -42,6 +44,7 @@ struct SettingsView: View {
             switch self {
             case .general: return "gearshape"
             case .goLinks: return "link"
+            case .launcher: return "wifi"
             case .terminal: return "terminal"
             case .rows: return "list.bullet"
             }
@@ -99,6 +102,7 @@ struct SettingsView: View {
                 switch selectedSection {
                 case .general: generalTab
                 case .goLinks: goLinksTab
+                case .launcher: launcherTab
                 case .terminal: terminalTab
                 case .rows: rowsTab
                 }
@@ -227,6 +231,47 @@ struct SettingsView: View {
                             }
                         }
                     }
+                }
+            }
+            Spacer()
+        }
+        .padding(.top, 8)
+    }
+
+    private var launcherTab: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            settingRow(
+                title: "LAN Launcher",
+                subtitle: "Serve a phone-friendly page at port \(LauncherServer.port) listing every app with tap-to-open links and live status. Reachable from any device on the same Wi-Fi.",
+                binding: $launcherEnabled
+            )
+            .onChange(of: launcherEnabled) { _, enabled in
+                model.setLauncherEnabled(enabled)
+            }
+
+            if launcherEnabled {
+                Divider()
+                HStack(alignment: .top, spacing: 18) {
+                    QRPopover(port: Int(LauncherServer.port))
+                        .fixedSize()
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Scan to open the launcher on your phone")
+                            .font(.system(size: 13, weight: .medium))
+                        Text(model.launcherURL)
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                        Button("Open in browser") {
+                            if let url = URL(string: model.launcherURL) { NSWorkspace.shared.open(url) }
+                        }
+                        .controlSize(.small)
+                        Text("Apps you Run from OpenPort are auto-exposed on the LAN (Vite, Next, CRA). macOS may ask to allow incoming connections the first time — click Allow.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.top, 2)
+                    }
+                    Spacer(minLength: 0)
                 }
             }
             Spacer()

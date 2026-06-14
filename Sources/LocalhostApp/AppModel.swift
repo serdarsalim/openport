@@ -13,6 +13,7 @@ final class AppModel: ObservableObject {
     private let portStore = PortStore()
     private let goLinkStore = GoLinkStore()
     private let proxyServer = ProxyServer()
+    private let launcherServer = LauncherServer()
     private let defaults = UserDefaults.standard
 
     init() {
@@ -27,9 +28,20 @@ final class AppModel: ObservableObject {
                 app.backendRunning = false
                 app.crashLog = self.processManager.crashLog(for: name)
             }
+            self.refreshLauncher()
+        }
+        // The launcher's Run/Stop taps arrive on the network queue; hop to the main actor.
+        launcherServer.onStart = { [weak self] name in
+            Task { @MainActor in self?.startByName(name) }
+        }
+        launcherServer.onStop = { [weak self] name in
+            Task { @MainActor in self?.stopByName(name) }
         }
         if defaults.bool(forKey: "goLinksEnabled") {
             proxyServer.start()
+        }
+        if defaults.bool(forKey: "launcherEnabled") {
+            launcherServer.start()
         }
     }
 
@@ -167,6 +179,7 @@ final class AppModel: ObservableObject {
             .sorted { $0.port < $1.port }
 
         refreshProxyRoutes()
+        refreshLauncher()
     }
 
     /// Hide listeners that aren't user dev servers — system daemons, Mac apps,
@@ -217,7 +230,8 @@ final class AppModel: ObservableObject {
             devScript: app.devScript,
             devScriptName: app.devScriptName,
             backendCommand: app.needsSidecar ? app.backendCommand : nil,
-            convexCompat: app.backendKind == .convex
+            convexCompat: app.backendKind == .convex,
+            bindHost: launcherEnabled
         )
         update(app.name) {
             $0.isRunning = true
@@ -225,6 +239,19 @@ final class AppModel: ObservableObject {
             $0.backendRunning = app.needsSidecar
         }
         refreshProxyRoutes()
+        refreshLauncher()
+    }
+
+    /// Look up an app by name and start it. Used by the LAN launcher's Run button.
+    func startByName(_ name: String) {
+        guard let app = apps.first(where: { $0.name == name }), app.portStatus != .external else { return }
+        start(app: app)
+    }
+
+    /// Look up an app by name and stop it. Used by the LAN launcher's Stop button.
+    func stopByName(_ name: String) {
+        guard let app = apps.first(where: { $0.name == name }) else { return }
+        stop(app: app)
     }
 
     func stop(app: DevApp) {
@@ -237,6 +264,7 @@ final class AppModel: ObservableObject {
         let extraPids = app.extraPorts.map(\.pid)
         update(app.name) { $0.isRunning = false; $0.portStatus = .free; $0.detectedPort = nil; $0.externalPID = nil; $0.backendRunning = false; $0.crashLog = nil; $0.extraPorts = [] }
         refreshProxyRoutes()
+        refreshLauncher()
         Task.detached {
             for pid in extraPids { SystemClient.killTree(pid: pid) }
             SystemClient.killPort(port)
@@ -260,6 +288,7 @@ final class AppModel: ObservableObject {
             apps[idx].extraPorts = []
         }
         refreshProxyRoutes()
+        refreshLauncher()
 
         Task.detached {
             for pid in externalPIDs { SystemClient.killTree(pid: pid) }
@@ -295,6 +324,7 @@ final class AppModel: ObservableObject {
         ports[app.name] = port
         portStore.save(ports)
         update(app.name) { $0.port = port }
+        refreshLauncher()
     }
 
     func updateGoAlias(for app: DevApp, alias: String) {
@@ -315,6 +345,35 @@ final class AppModel: ObservableObject {
     }
 
     var goLinksEnabled: Bool { defaults.bool(forKey: "goLinksEnabled") }
+
+    // MARK: - LAN Launcher
+
+    var launcherEnabled: Bool { defaults.bool(forKey: "launcherEnabled") }
+
+    /// The launcher's own URL — what the footer QR encodes and Settings displays.
+    var launcherURL: String { "http://\(SystemClient.lanIPAddress()):\(LauncherServer.port)" }
+
+    func setLauncherEnabled(_ enabled: Bool) {
+        defaults.set(enabled, forKey: "launcherEnabled")
+        if enabled {
+            launcherServer.start()
+            refreshLauncher()
+        } else {
+            launcherServer.stop()
+        }
+    }
+
+    private func refreshLauncher() {
+        let infos = apps.map { app in
+            LaunchAppInfo(
+                name: app.name,
+                port: app.detectedPort ?? app.port,
+                isExternal: app.portStatus == .external,
+                backendLabel: app.hasBackend ? app.backendKind?.label : nil
+            )
+        }
+        launcherServer.update(apps: infos, lanIP: SystemClient.lanIPAddress())
+    }
 
     func openTerminal(for app: DevApp) {
         guard let root = portfolioRoot else { return }
