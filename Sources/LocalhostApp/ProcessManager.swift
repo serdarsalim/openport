@@ -157,6 +157,16 @@ final class ProcessManager {
     /// Append the right host flag for the framework. Vite and Next take a CLI flag (passed
     /// through `npm run … --` when invoked via npm); CRA/unknown rely on the HOST env var.
     static func applyHostBinding(to command: String, framework: Framework, viaNpm: Bool) -> String {
+        // When the frontend runs inside a wrapper like `convex dev --start 'next dev …'`,
+        // the host flag belongs on the inner command, not the wrapper — otherwise Convex
+        // (or whatever launches the dev server) receives `-H` and aborts. Inject into the
+        // quoted sub-command and re-wrap.
+        if let open = command.range(of: "--start '"),
+           let close = command[open.upperBound...].firstIndex(of: "'") {
+            let inner = String(command[open.upperBound..<close])
+            let patched = applyHostBinding(to: inner, framework: framework, viaNpm: false)
+            return String(command[..<open.upperBound]) + patched + String(command[close...])
+        }
         switch framework {
         case .vite:
             if command.contains("--host") { return command }
