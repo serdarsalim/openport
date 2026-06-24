@@ -242,6 +242,35 @@ final class AppModel: ObservableObject {
         refreshLauncher()
     }
 
+    /// Stop, wipe the framework's build cache, then start fresh. Cures the case where a dev
+    /// server wedges on compile (pegged CPU, port open but never responds) and a plain restart
+    /// doesn't help because it reuses the poisoned cache. No-op cache-wise for frameworks we
+    /// don't recognize, in which case it's just a restart.
+    func cleanRestart(app: DevApp) {
+        guard let root = portfolioRoot else { return }
+        let dir = root.appendingPathComponent(app.name)
+        let framework = ProcessManager.detectFramework(devScript: app.devScript)
+        let port = app.detectedPort ?? app.port
+
+        if app.isRunning { processManager.stop(name: app.name) }
+        update(app.name) {
+            $0.isRunning = false; $0.portStatus = .free; $0.detectedPort = nil
+            $0.externalPID = nil; $0.backendRunning = false; $0.crashLog = nil; $0.extraPorts = []
+        }
+        refreshProxyRoutes()
+        refreshLauncher()
+
+        // Free the port and clear the cache off the main thread (a large .next can take a
+        // second to delete), then start fresh once it's gone.
+        Task {
+            await Task.detached(priority: .userInitiated) {
+                SystemClient.killPort(port)
+                ProcessManager.clearCaches(in: dir, framework: framework)
+            }.value
+            start(app: app)
+        }
+    }
+
     /// Look up an app by name and start it. Used by the LAN launcher's Run button.
     func startByName(_ name: String) {
         guard let app = apps.first(where: { $0.name == name }), app.portStatus != .external else { return }

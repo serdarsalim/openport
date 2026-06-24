@@ -52,6 +52,23 @@ struct AppRowView: View {
         .sheet(isPresented: $showLogs) {
             LogsSheet(app: app, model: model)
         }
+        .contextMenu {
+            if let cacheLabel {
+                Button {
+                    model.cleanRestart(app: app)
+                } label: {
+                    Label("Clean Restart — clear \(cacheLabel) cache",
+                          systemImage: "arrow.triangle.2.circlepath")
+                }
+                .help("Stop, delete the build cache, then start fresh. Use when the server is wedged and a plain restart doesn't fix it.")
+            }
+        }
+    }
+
+    /// The framework cache this app's dev server reuses between runs (e.g. ".next"). nil when
+    /// we don't recognize the framework — we hide Clean Restart rather than offer a no-op.
+    private var cacheLabel: String? {
+        ProcessManager.cacheDirs(for: ProcessManager.detectFramework(devScript: app.devScript)).first
     }
 
     private var appName: some View {

@@ -154,6 +154,30 @@ final class ProcessManager {
         return .unknown
     }
 
+    /// Build caches a framework's dev server reuses between runs, relative to the project dir.
+    /// A corrupt or oversized cache is the usual reason `npm run dev` pegs CPU and never serves —
+    /// a plain Stop→Run reuses it and wedges again, so a clean restart wipes these first.
+    nonisolated static func cacheDirs(for framework: Framework) -> [String] {
+        switch framework {
+        case .next:    return [".next"]
+        case .vite:    return ["node_modules/.vite", ".svelte-kit"]  // SvelteKit runs on Vite
+        case .cra:     return ["node_modules/.cache"]
+        case .unknown: return []
+        }
+    }
+
+    /// Delete a framework's build caches off the main thread. No-op for unknown frameworks or
+    /// caches that don't exist. Safe — these are regenerated on the next dev build.
+    nonisolated static func clearCaches(in directory: URL, framework: Framework) {
+        let fm = FileManager.default
+        for rel in cacheDirs(for: framework) {
+            let url = directory.appendingPathComponent(rel)
+            if fm.fileExists(atPath: url.path) {
+                try? fm.removeItem(at: url)
+            }
+        }
+    }
+
     /// Append the right host flag for the framework. Vite and Next take a CLI flag (passed
     /// through `npm run … --` when invoked via npm); CRA/unknown rely on the HOST env var.
     static func applyHostBinding(to command: String, framework: Framework, viaNpm: Bool) -> String {

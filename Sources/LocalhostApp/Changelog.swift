@@ -12,6 +12,14 @@ enum Changelog {
     /// Date format: yyyy-MM-dd.
     static let entries: [ChangelogEntry] = [
         ChangelogEntry(
+            version: "1.4.0",
+            date: "2026-06-24",
+            items: [
+                "Clean Restart — right-click any app and pick \"Clean Restart\" to stop it, delete its framework build cache, and start fresh in one move. This is the fix for the dev server that wedges on compile: port open, CPU pegged, but the page never loads, and a normal Stop→Run doesn't help because it reuses the same poisoned cache. OpenPort knows which cache to wipe per framework (Next's .next, Vite/SvelteKit's node_modules/.vite and .svelte-kit, CRA's node_modules/.cache), so you don't have to drop into a terminal and rm -rf it yourself.",
+                "Plain Run stays fast — the cache is only cleared when you explicitly choose Clean Restart, so day-to-day launches don't pay a from-scratch rebuild."
+            ]
+        ),
+        ChangelogEntry(
             version: "1.3.0",
             date: "2026-06-14",
             items: [
