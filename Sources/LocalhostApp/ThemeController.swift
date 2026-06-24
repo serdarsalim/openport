@@ -10,7 +10,6 @@ enum ThemeMode: String, CaseIterable, Identifiable {
     case auto
     case light
     case dark
-    case system
 
     var id: String { rawValue }
 
@@ -19,7 +18,6 @@ enum ThemeMode: String, CaseIterable, Identifiable {
         case .auto:   return "Auto"
         case .light:  return "Light"
         case .dark:   return "Dark"
-        case .system: return "System"
         }
     }
 
@@ -28,7 +26,6 @@ enum ThemeMode: String, CaseIterable, Identifiable {
         case .auto:   return "sun.horizon.fill"
         case .light:  return "sun.max.fill"
         case .dark:   return "moon.fill"
-        case .system: return "circle.lefthalf.filled"
         }
     }
 }
@@ -76,7 +73,6 @@ final class ThemeController: ObservableObject {
         switch mode {
         case .light:  resolvedScheme = .light
         case .dark:   resolvedScheme = .dark
-        case .system: resolvedScheme = nil
         case .auto:
             let coords = SunCalc.coordsForTimezone(TimeZone.current.identifier)
             guard let times = SunCalc.sunTimes(date: Date(), lat: coords.lat, lng: coords.lng) else {
