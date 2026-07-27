@@ -170,6 +170,45 @@ Port turns **orange** when another process on your machine is already using it. 
 
 ---
 
+## openport.json
+
+OpenPort works out a project's port and dev command by reading its `package.json`. That falls apart when the dev command is a launcher script — `"dev": "node scripts/dev.mjs"` hides which port Next actually binds, so OpenPort watches the wrong one and shows the app as crashed while it's serving fine.
+
+Drop an `openport.json` in the project root to say it outright:
+
+```json
+{
+  "run": [{ "name": "dev", "command": "npm run dev", "port": 3006 }],
+  "backend": { "kind": "convex", "bundled": true, "local": true },
+  "framework": "next"
+}
+```
+
+**Running more than one stack from one click.** Add entries to `run`. The first owns the row's port and the browser button; the rest start with it and stop with it:
+
+```json
+{
+  "run": [
+    { "name": "hubspot", "command": "npm run dev:hubspot", "port": 3012 },
+    { "name": "native",  "command": "npm run dev:native",  "port": 3013 }
+  ],
+  "caches": [".next", ".next-native"]
+}
+```
+
+The extra stacks show up under the ports dot next to the app name.
+
+| Key | Meaning |
+|---|---|
+| `run[]` | `name`, `command`, `port`. Commands run exactly as written — no port rewriting, no injected flags. |
+| `backend` | `kind` (`convex`/`supabase`), `bundled` (your dev command already starts it), `local` (it's a process on your machine, not cloud), `command` (what to run if it isn't bundled). Replaces OpenPort's guesswork. |
+| `framework` | `next`, `vite`, or `cra` — tells Clean Restart which build cache to wipe. |
+| `caches` | Extra build directories to wipe on Clean Restart. |
+
+Every key is optional, and a broken file just falls back to the old behaviour. A declared port wins over the one OpenPort assigned, so the port field stops being editable for that project — the file is the source of truth. Declared projects also opt out of the LAN launcher's auto-expose, since OpenPort won't rewrite a command you wrote.
+
+---
+
 ## go/ links
 
 go/ links let you type `http://go/alias` in any browser to open a project instantly — the same way internal tools work at tech companies.

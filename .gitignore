@@ -5,3 +5,5 @@ dist/
 *.d
 make-icon.swift
 Sources/LocalhostApp/AppVersion.swift
+
+.claude/worktrees/

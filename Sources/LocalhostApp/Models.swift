@@ -21,6 +21,19 @@ enum BackendKind: String, Sendable, Hashable {
     }
 }
 
+/// One process a project's Run starts, declared explicitly in `openport.json`.
+///
+/// This exists because guessing stops working once a project wraps its dev server in a
+/// launcher script: we can't read `npm run dev` and know it boots two frontends and a
+/// backend watcher. A declared target is run verbatim — we don't patch its port or inject
+/// host flags, because the project already said exactly what it wants.
+struct RunTarget: Sendable, Hashable, Identifiable {
+    var id: String { name }
+    let name: String     // short label shown in the ports popover ("hubspot", "native")
+    let command: String  // run as-is in the project directory
+    let port: Int?       // the port this target binds, when the project tells us
+}
+
 struct DevApp: Identifiable, Sendable, Hashable {
     var id: String { name }
     let name: String
@@ -51,6 +64,18 @@ struct DevApp: Identifiable, Sendable, Hashable {
 
     var crashLog: String? = nil     // last stderr output captured on unexpected exit
     var extraPorts: [DetectedPort] = [] // additional ports bound by this app's cwd
+
+    // Declared in openport.json. Empty means we fell back to reading package.json.
+    var runTargets: [RunTarget] = []
+    var declaredFramework: String? = nil   // overrides dev-script sniffing for cache clearing
+    var declaredCaches: [String] = []      // build caches to wipe on a clean restart
+
+    /// The project told us what Run means, so we stop inferring it.
+    var isDeclared: Bool { !runTargets.isEmpty }
+    /// The target that owns this row's port and status.
+    var primaryTarget: RunTarget? { runTargets.first }
+    /// Everything else we start alongside the primary and stop with it.
+    var sidecarTargets: [RunTarget] { isDeclared ? Array(runTargets.dropFirst()) : [] }
 }
 
 struct DetectedPort: Sendable, Hashable, Identifiable {

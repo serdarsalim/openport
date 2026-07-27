@@ -15,8 +15,22 @@ struct PortStore {
 
     /// Assigns ports to app names. For new apps, prefers the port hardcoded in
     /// their dev script (scriptPorts) over auto-incrementing from 3001.
-    func assign(to appNames: [String], scriptPorts: [String: Int] = [:]) -> [String: Int] {
+    ///
+    /// `declaredPorts` (from openport.json) outrank everything, including a port already in
+    /// the store. A project that declares 3006 and runs its command verbatim genuinely binds
+    /// 3006 — an auto-assigned 3001 left over from before the declaration would just make us
+    /// watch the wrong port forever and report the app as crashed while it happily serves.
+    func assign(
+        to appNames: [String],
+        scriptPorts: [String: Int] = [:],
+        declaredPorts: [String: Int] = [:]
+    ) -> [String: Int] {
         var ports = load()
+
+        for (name, port) in declaredPorts where ports[name] != port {
+            ports[name] = port
+        }
+
         var used = Set(ports.values)
         var next = 3001
 

@@ -3,7 +3,7 @@ import Foundation
 @MainActor
 final class ProcessManager {
     private var running: [String: Process] = [:]
-    private var backends: [String: Process] = [:]
+    private var backends: [String: [Process]] = [:]
     private var stopping: Set<String> = []
     private var logBuffers: [String: LogBuffer] = [:]
     private(set) var crashLogs: [String: String] = [:]  // name → last stderr on unexpected exit
@@ -16,13 +16,16 @@ final class ProcessManager {
         in directory: URL,
         devScript: String? = nil,
         devScriptName: String? = nil,
+        primaryCommand: String? = nil,
+        sidecars: [RunTarget] = [],
         backendCommand: String? = nil,
         convexCompat: Bool = false,
-        bindHost: Bool = false
+        bindHost: Bool = false,
+        declaredFramework: String? = nil
     ) {
         guard !(running[name]?.isRunning == true) else { return }
 
-        let framework = Self.detectFramework(devScript: devScript)
+        let framework = Self.detectFramework(devScript: devScript, declared: declaredFramework)
         let env = baseEnvironment(port: port, directory: directory, convexCompat: convexCompat,
                                   bindHost: bindHost, framework: framework)
         let scriptName = devScriptName ?? "dev"
@@ -31,12 +34,19 @@ final class ProcessManager {
         // can reach it. The lever is framework-specific: Vite/Next take a flag, CRA reads HOST.
         let base: String
         let viaNpm: Bool
-        if let script = devScript, script.contains("-p") || script.contains("--port") {
-            base = patchPort(in: script, to: port); viaNpm = false
+        let declared: Bool
+        if let primaryCommand {
+            // Declared in openport.json — run it exactly as written. We don't patch its port or
+            // graft on host flags: the project already stated what it wants, and rewriting a
+            // command we can't parse (a launcher script, a wrapper) is how we'd break it.
+            base = primaryCommand; viaNpm = false; declared = true
+        } else if let script = devScript, script.contains("-p") || script.contains("--port") {
+            base = patchPort(in: script, to: port); viaNpm = false; declared = false
         } else {
-            base = "npm run \(scriptName)"; viaNpm = true
+            base = "npm run \(scriptName)"; viaNpm = true; declared = false
         }
-        let command = "exec \(bindHost ? Self.applyHostBinding(to: base, framework: framework, viaNpm: viaNpm) : base)"
+        let shouldBindHost = bindHost && !declared
+        let command = "exec \(shouldBindHost ? Self.applyHostBinding(to: base, framework: framework, viaNpm: viaNpm) : base)"
 
         // Clear any previous crash log when restarting.
         crashLogs.removeValue(forKey: name)
@@ -51,8 +61,8 @@ final class ProcessManager {
                 let unexpected = !self.stopping.contains(name)
                 self.stopping.remove(name)
                 self.running.removeValue(forKey: name)
-                if let backend = self.backends.removeValue(forKey: name), backend.isRunning {
-                    backend.terminate()
+                for sidecar in self.backends.removeValue(forKey: name) ?? [] where sidecar.isRunning {
+                    SystemClient.killTree(pid: sidecar.processIdentifier)
                 }
                 if unexpected {
                     if let log = self.logBuffers[name]?.snapshot() {
@@ -66,15 +76,28 @@ final class ProcessManager {
             }
         }
 
-        if let backendCommand {
-            let backend = makeProcess(directory: directory, env: env, command: "exec \(backendCommand)", logBuffer: buffer)
-            backend.terminationHandler = { [weak self, name] _ in
+        // Everything that runs alongside the primary: declared sidecar targets first, then the
+        // sniffed backend command. Each gets its own PORT so a target that reads the env var
+        // doesn't inherit the primary's port and collide with it.
+        var companions: [(command: String, port: Int?)] = sidecars.map { ($0.command, $0.port) }
+        if let backendCommand { companions.append((backendCommand, nil)) }
+
+        for companion in companions {
+            var companionEnv = env
+            if let companionPort = companion.port {
+                companionEnv["PORT"] = "\(companionPort)"
+                companionEnv["VITE_PORT"] = "\(companionPort)"
+            }
+            let process = makeProcess(directory: directory, env: companionEnv,
+                                      command: "exec \(companion.command)", logBuffer: buffer)
+            process.terminationHandler = { [weak self, name] finished in
                 Task { @MainActor [weak self] in
-                    self?.backends.removeValue(forKey: name)
+                    self?.backends[name]?.removeAll { $0 === finished }
+                    if self?.backends[name]?.isEmpty == true { self?.backends.removeValue(forKey: name) }
                 }
             }
-            try? backend.run()
-            backends[name] = backend
+            try? process.run()
+            backends[name, default: []].append(process)
         }
 
         try? frontend.run()
@@ -87,8 +110,8 @@ final class ProcessManager {
         if let proc = running[name] { SystemClient.killTree(pid: proc.processIdentifier) }
         running.removeValue(forKey: name)
         logBuffers.removeValue(forKey: name)
-        if let backend = backends.removeValue(forKey: name), backend.isRunning {
-            SystemClient.killTree(pid: backend.processIdentifier)
+        for sidecar in backends.removeValue(forKey: name) ?? [] where sidecar.isRunning {
+            SystemClient.killTree(pid: sidecar.processIdentifier)
         }
     }
 
@@ -97,7 +120,7 @@ final class ProcessManager {
         for process in running.values where process.isRunning {
             SystemClient.killTree(pid: process.processIdentifier)
         }
-        for process in backends.values where process.isRunning {
+        for process in backends.values.flatMap({ $0 }) where process.isRunning {
             SystemClient.killTree(pid: process.processIdentifier)
         }
         running.removeAll()
@@ -109,7 +132,8 @@ final class ProcessManager {
     /// Synchronous nuke for app shutdown. SIGTERM → 500ms wait → SIGKILL, blocking briefly so
     /// children actually die before we exit (otherwise they reparent to launchd as orphans).
     func nukeAllSync() {
-        let pids = (running.values.map(\.processIdentifier) + backends.values.map(\.processIdentifier))
+        let pids = (running.values.map(\.processIdentifier)
+            + backends.values.flatMap { $0 }.map(\.processIdentifier))
             .filter { $0 > 0 }
         for pid in pids {
             kill(-pid, SIGTERM)
@@ -127,7 +151,7 @@ final class ProcessManager {
     }
 
     func isBackendRunning(name: String) -> Bool {
-        backends[name]?.isRunning == true
+        backends[name]?.contains { $0.isRunning } == true
     }
 
     func crashLog(for name: String) -> String? {
@@ -146,7 +170,16 @@ final class ProcessManager {
     /// Frameworks we know how to expose on the LAN. `unknown` falls back to the HOST env var.
     enum Framework { case next, vite, cra, unknown }
 
-    static func detectFramework(devScript: String?) -> Framework {
+    /// A declared framework (openport.json) wins — a project whose dev command is
+    /// `node scripts/dev.mjs` gives the sniffer nothing to go on, and guessing `.unknown`
+    /// silently turns clean-restart into a plain restart.
+    static func detectFramework(devScript: String?, declared: String? = nil) -> Framework {
+        switch declared {
+        case "next":                       return .next
+        case "vite", "sveltekit", "svelte": return .vite
+        case "cra", "react-scripts":       return .cra
+        default: break
+        }
         guard let s = devScript?.lowercased() else { return .unknown }
         if s.contains("next") { return .next }
         if s.contains("vite") { return .vite }
@@ -168,9 +201,13 @@ final class ProcessManager {
 
     /// Delete a framework's build caches off the main thread. No-op for unknown frameworks or
     /// caches that don't exist. Safe — these are regenerated on the next dev build.
-    nonisolated static func clearCaches(in directory: URL, framework: Framework) {
+    nonisolated static func clearCaches(in directory: URL, framework: Framework, extra: [String] = []) {
         let fm = FileManager.default
-        for rel in cacheDirs(for: framework) {
+        // A declared cache list is additive: a project with two dev stacks has two build dirs
+        // (.next and .next-native), and wiping only the one we know about leaves the other
+        // poisoned — exactly the state clean-restart exists to clear.
+        let relative = Array(Set(cacheDirs(for: framework) + extra))
+        for rel in relative where !rel.isEmpty && !rel.hasPrefix("/") && !rel.contains("..") {
             let url = directory.appendingPathComponent(rel)
             if fm.fileExists(atPath: url.path) {
                 try? fm.removeItem(at: url)

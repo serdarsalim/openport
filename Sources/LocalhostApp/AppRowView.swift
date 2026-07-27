@@ -129,13 +129,22 @@ struct AppRowView: View {
     }
 
     private var hasMultiPortInfo: Bool {
-        !app.extraPorts.isEmpty || app.hasBackend
+        !app.extraPorts.isEmpty || app.hasBackend || !app.sidecarTargets.isEmpty
     }
 
     private var multiPortDotColor: Color {
         if !app.extraPorts.isEmpty { return .green }
         if app.hasBackend && app.backendRunning { return .green }
+        if !app.sidecarTargets.isEmpty && app.isRunning { return .green }
         return .secondary.opacity(0.35)
+    }
+
+    /// Ports we know this app binds: the ones we've observed, plus any the project declared
+    /// but that haven't come up yet (a target still booting shouldn't read as a single-port app).
+    private var knownPortCount: Int {
+        let observed = Set(app.extraPorts.map(\.port) + [app.detectedPort ?? app.port])
+        let declared = Set(app.sidecarTargets.compactMap(\.port))
+        return observed.union(declared).count
     }
 
     private var multiPortDot: some View {
@@ -145,7 +154,7 @@ struct AppRowView: View {
                 .frame(width: 7, height: 7)
         }
         .buttonStyle(.plain)
-        .help("\(app.extraPorts.count + 1) port\(app.extraPorts.count == 0 ? "" : "s") — click to view")
+        .help("\(knownPortCount) port\(knownPortCount == 1 ? "" : "s") — click to view")
         .popover(isPresented: $showPortsPopover, arrowEdge: .bottom) {
             MultiPortPopover(app: app)
         }
@@ -251,16 +260,28 @@ struct AppRowView: View {
                         .font(.system(.body, design: .monospaced))
                         .foregroundStyle(app.portStatus == .external ? Color.orange : .secondary)
                         .onTapGesture {
-                            guard !app.isRunning && app.portStatus != .detached else { return }
+                            guard portIsEditable else { return }
                             portDraft = "\(app.port)"
                             editingPort = true
                         }
-                        .help(app.isRunning || app.portStatus == .detached ? "Stop the server to change its port" : "Click to edit port")
+                        .help(portHelp)
                     if hasMultiPortInfo { multiPortDot }
                 }
             }
         }
         .frame(width: 90, alignment: .leading)
+    }
+
+    /// A port declared in openport.json isn't ours to change: the project's command binds it
+    /// literally, and we'd only overwrite the edit on the next scan.
+    private var portIsEditable: Bool {
+        !app.isRunning && app.portStatus != .detached && app.primaryTarget?.port == nil
+    }
+
+    private var portHelp: String {
+        if app.primaryTarget?.port != nil { return "Port is set in this project's openport.json" }
+        if app.isRunning || app.portStatus == .detached { return "Stop the server to change its port" }
+        return "Click to edit port"
     }
 
     private func savePort() {
@@ -593,10 +614,15 @@ struct MultiPortPopover: View {
                 .font(.headline)
             Divider()
 
-            portRow(port: primaryPort, command: nil, isPrimary: true)
+            portRow(port: primaryPort, command: app.primaryTarget?.command, isPrimary: true)
 
             ForEach(app.extraPorts) { extra in
                 portRow(port: extra.port, command: extra.command, isPrimary: false)
+            }
+
+            if !app.sidecarTargets.isEmpty {
+                Divider().padding(.vertical, 2)
+                runTargetsSection
             }
 
             if let kind = app.backendKind {
@@ -606,6 +632,34 @@ struct MultiPortPopover: View {
         }
         .padding(14)
         .frame(width: 380)
+    }
+
+    /// The extra stacks this project's Run starts, as declared in openport.json.
+    @ViewBuilder
+    private var runTargetsSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Also started by Run")
+                .font(.caption)
+                .fontWeight(.medium)
+            ForEach(app.sidecarTargets) { target in
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(app.isRunning ? Color.green : Color.secondary.opacity(0.4))
+                        .frame(width: 6, height: 6)
+                    Text(target.name)
+                        .font(.caption)
+                    Spacer()
+                    if let port = target.port {
+                        Text(verbatim: "\(port)")
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Text(target.command)
+                    .font(.system(.caption2, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+            }
+        }
     }
 
     @ViewBuilder

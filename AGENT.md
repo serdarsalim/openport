@@ -52,7 +52,8 @@ Sources/LocalhostApp/
   Models.swift                       DevApp, GitStatus, PortStatus (Sendable structs)
   PortStore.swift                    load/save ports in UserDefaults (key: "appPorts")
   GoLinkStore.swift                  load/save go/ aliases in UserDefaults (key: "goLinks")
-  AppScanner.swift                   scans portfolio root for dirs with package.json + "dev" script
+  AppScanner.swift                   scans portfolio root for dirs with package.json + "dev" script,
+                                     reads openport.json when a project declares its own run targets
   ProcessManager.swift               @MainActor, starts/stops npm via /bin/zsh exec npm run dev
   GitClient.swift                    async git status checks via Task.detached shell calls
   SystemClient.swift                 open Terminal / VS Code / Finder / browser, copy LAN URL,
@@ -69,6 +70,47 @@ Sources/LocalhostApp/
 ---
 
 ## Key decisions & gotchas
+
+### openport.json — the project declares, we stop guessing
+
+Every heuristic in `AppScanner` breaks the moment a project wraps its dev server in a
+launcher script. `"dev": "node scripts/dev.mjs"` tells us nothing: not the port it binds,
+not how many processes it starts, not whether the backend comes up with it. We used to
+auto-assign a port, watch it forever, and paint the row `.crashed` while the app served
+fine on a port we never looked at.
+
+So a project can state it outright, in `openport.json` at its root:
+
+```json
+{
+  "run": [
+    { "name": "hubspot", "command": "npm run dev:hubspot", "port": 3012 },
+    { "name": "native",  "command": "npm run dev:native",  "port": 3013 }
+  ],
+  "backend": { "kind": "convex", "bundled": true, "local": true },
+  "framework": "next",
+  "caches": [".next", ".next-native"]
+}
+```
+
+Rules that matter:
+
+- **First `run` entry is primary** — it owns the row's port, status, and browser actions.
+  The rest are sidecars: started with it, killed with it, each with its own `PORT` env.
+- **Declared commands run verbatim.** No `patchPort`, no `applyHostBinding`. We can't parse
+  a launcher script, so rewriting it is how we'd break it — which means `bindHost` (LAN
+  launcher auto-expose) is skipped for declared projects. That's the trade for reliability.
+- **A declared port outranks the store.** `PortStore.assign` overwrites a saved value from
+  `declaredPorts`, so a project that once picked up a wrong auto-assignment self-corrects.
+  Consequence: editing the port in the UI for a declared app doesn't stick.
+- **`backend` is optional and total** — when present it replaces `detectBackend` sniffing
+  outright (no merging). Absent, the old heuristics run unchanged.
+- **Every key is optional and a malformed file falls back to sniffing**, never hides the
+  project. Unknown keys are ignored, which is why `_comment` works.
+- A project with `openport.json` and no `dev`/`dev:frontend` script still shows up.
+
+Live examples: `nudge/openport.json` (two stacks), `randevu/openport.json` (one stack whose
+port was invisible).
 
 ### Port persistence
 `PortStore` uses `UserDefaults`. `defaults.dictionary(forKey:)` returns `[String: Any]` — cannot cast directly to `[String: Int]`. Always use `compactMapValues { $0 as? Int }`. This was a root-cause bug — don't revert it.

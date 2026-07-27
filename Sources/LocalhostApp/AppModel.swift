@@ -72,7 +72,11 @@ final class AppModel: ObservableObject {
             return (item.name, n)
         })
         let scannedByName = Dictionary(uniqueKeysWithValues: scanned.map { ($0.name, $0) })
-        let ports = portStore.assign(to: appNames, scriptPorts: scriptPorts)
+        let declaredPorts = Dictionary(uniqueKeysWithValues: scanned.compactMap { item -> (String, Int)? in
+            guard let p = item.declaredPort else { return nil }
+            return (item.name, p)
+        })
+        let ports = portStore.assign(to: appNames, scriptPorts: scriptPorts, declaredPorts: declaredPorts)
         let goAliases = goLinkStore.load()
         let runningNames = Set(appNames.filter { processManager.isRunning(name: $0) })
 
@@ -165,7 +169,10 @@ final class AppModel: ObservableObject {
                 backendCommand: scannedApp?.backendCommand,
                 backendRunning: processManager.isBackendRunning(name: name),
                 nodeNote: nodeNote,
-                extraPorts: extras
+                extraPorts: extras,
+                runTargets: scannedApp?.runTargets ?? [],
+                declaredFramework: scannedApp?.framework,
+                declaredCaches: scannedApp?.cacheDirs ?? []
             )
         }
 
@@ -229,14 +236,17 @@ final class AppModel: ObservableObject {
             in: root.appendingPathComponent(app.name),
             devScript: app.devScript,
             devScriptName: app.devScriptName,
+            primaryCommand: app.primaryTarget?.command,
+            sidecars: app.sidecarTargets,
             backendCommand: app.needsSidecar ? app.backendCommand : nil,
             convexCompat: app.backendKind == .convex,
-            bindHost: launcherEnabled
+            bindHost: launcherEnabled,
+            declaredFramework: app.declaredFramework
         )
         update(app.name) {
             $0.isRunning = true
             $0.portStatus = .running
-            $0.backendRunning = app.needsSidecar
+            $0.backendRunning = app.needsSidecar || !app.sidecarTargets.isEmpty
         }
         refreshProxyRoutes()
         refreshLauncher()
@@ -249,8 +259,10 @@ final class AppModel: ObservableObject {
     func cleanRestart(app: DevApp) {
         guard let root = portfolioRoot else { return }
         let dir = root.appendingPathComponent(app.name)
-        let framework = ProcessManager.detectFramework(devScript: app.devScript)
+        let framework = ProcessManager.detectFramework(devScript: app.devScript, declared: app.declaredFramework)
+        let extraCaches = app.declaredCaches
         let port = app.detectedPort ?? app.port
+        let sidecarPorts = app.sidecarTargets.compactMap(\.port)
 
         if app.isRunning { processManager.stop(name: app.name) }
         update(app.name) {
@@ -265,7 +277,8 @@ final class AppModel: ObservableObject {
         Task {
             await Task.detached(priority: .userInitiated) {
                 SystemClient.killPort(port)
-                ProcessManager.clearCaches(in: dir, framework: framework)
+                for sidecarPort in sidecarPorts { SystemClient.killPort(sidecarPort) }
+                ProcessManager.clearCaches(in: dir, framework: framework, extra: extraCaches)
             }.value
             start(app: app)
         }
@@ -291,12 +304,16 @@ final class AppModel: ObservableObject {
         }
         let port = app.detectedPort ?? app.port
         let extraPids = app.extraPorts.map(\.pid)
+        // Declared sidecar ports are swept too: lsof only sees a target that was still up when
+        // we last scanned, and a half-dead second stack holding 3013 blocks the next Run.
+        let sidecarPorts = app.sidecarTargets.compactMap(\.port)
         update(app.name) { $0.isRunning = false; $0.portStatus = .free; $0.detectedPort = nil; $0.externalPID = nil; $0.backendRunning = false; $0.crashLog = nil; $0.extraPorts = [] }
         refreshProxyRoutes()
         refreshLauncher()
         Task.detached {
             for pid in extraPids { SystemClient.killTree(pid: pid) }
             SystemClient.killPort(port)
+            for sidecarPort in sidecarPorts { SystemClient.killPort(sidecarPort) }
         }
     }
 

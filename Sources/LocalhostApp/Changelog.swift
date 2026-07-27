@@ -12,6 +12,16 @@ enum Changelog {
     /// Date format: yyyy-MM-dd.
     static let entries: [ChangelogEntry] = [
         ChangelogEntry(
+            version: "1.5.0",
+            date: "2026-07-27",
+            items: [
+                "openport.json — drop this file in a project root and OpenPort stops guessing what Run means. It's the fix for projects whose dev command hides behind a launcher script (node scripts/dev.mjs), where the port isn't in package.json for us to find: OpenPort would auto-assign a port, watch it forever, and flag the app as crashed while it was serving happily on a different one.",
+                "One Run, several stacks — the \"run\" array can list more than one command. The first owns the row's port and status; the rest start with it and stop with it, each on its own port. A repo running two frontends against two backends now takes one click instead of two terminal tabs.",
+                "Declared commands run verbatim — no port patching, no injected host flags. If you wrote it, that's what executes.",
+                "A declared port outranks a stored one, so a project that picked up a wrong auto-assigned port corrects itself on the next scan. Declaring \"backend\" also settles the Convex/Supabase chip instead of leaving it to sniffing, and \"framework\" plus \"caches\" tell Clean Restart which build dirs to wipe (all of them, for a multi-stack repo)."
+            ]
+        ),
+        ChangelogEntry(
             version: "1.4.0",
             date: "2026-06-24",
             items: [

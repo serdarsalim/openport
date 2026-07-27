@@ -19,6 +19,11 @@ struct AppScanner: Sendable {
         let backendBundled: Bool        // the frontend dev script already starts the backend
         let backendNeedsLocal: Bool     // backend runs as a local process (vs a cloud connection)
         let backendCommand: String?     // sidecar command to spawn when the backend isn't bundled
+        let runTargets: [RunTarget]     // declared in openport.json; empty = inferred from package.json
+        let framework: String?          // declared framework, overrides dev-script sniffing
+        let cacheDirs: [String]         // declared build caches to wipe on a clean restart
+        /// A declared port is the truth, not a hint — it overwrites a stored auto-assignment.
+        var declaredPort: Int? { runTargets.first?.port }
     }
 
     /// Returns app names and any port hardcoded in their dev script.
@@ -38,34 +43,45 @@ struct AppScanner: Sendable {
             let pkgPath = url.appendingPathComponent("package.json")
             guard fm.fileExists(atPath: pkgPath.path),
                   let data = try? Data(contentsOf: pkgPath),
-                  let pkg = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let scripts = pkg["scripts"] as? [String: Any]
+                  let pkg = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
             else { return nil }
+            let scripts = (pkg["scripts"] as? [String: Any]) ?? [:]
+
+            let config = readConfig(in: url)
 
             // Prefer "dev"; fall back to "dev:frontend" for split frontend/backend setups.
-            let devScriptName: String
-            let devScript: String
+            // A project that declares its own run targets doesn't need either.
+            let devScriptName: String?
+            let devScript: String?
             if let s = scripts["dev"] as? String {
                 devScriptName = "dev"
                 devScript = s
             } else if let s = scripts["dev:frontend"] as? String {
                 devScriptName = "dev:frontend"
                 devScript = s
+            } else if config?.runTargets.isEmpty == false {
+                devScriptName = nil
+                devScript = nil
             } else {
                 return nil
             }
 
-            let backend = detectBackend(in: url, devScript: devScript, scripts: scripts)
+            // An explicit backend declaration wins outright. Otherwise we sniff, as before.
+            let backend = config?.backend
+                ?? detectBackend(in: url, devScript: devScript ?? "", scripts: scripts)
 
             return ScannedApp(
                 name: name,
-                scriptPort: extractPort(from: devScript),
+                scriptPort: config?.runTargets.first?.port ?? devScript.flatMap(extractPort),
                 devScript: devScript,
                 devScriptName: devScriptName,
                 backendKind: backend.kind,
                 backendBundled: backend.bundled,
                 backendNeedsLocal: backend.needsLocal,
-                backendCommand: backend.command
+                backendCommand: backend.command,
+                runTargets: config?.runTargets ?? [],
+                framework: config?.framework,
+                cacheDirs: config?.cacheDirs ?? []
             )
         }.sorted { $0.name < $1.name }
     }
@@ -75,6 +91,75 @@ struct AppScanner: Sendable {
         var bundled: Bool
         var needsLocal: Bool
         var command: String?
+    }
+
+    private struct ProjectConfig {
+        var runTargets: [RunTarget]
+        var backend: BackendInfo?
+        var framework: String?
+        var cacheDirs: [String]
+    }
+
+    /// Reads `openport.json` from a project root. This is how a project stops us guessing:
+    /// once a dev command hides behind a launcher script (`node scripts/dev.mjs`), we can't
+    /// tell what port it binds or how many processes it starts, and every heuristic we'd add
+    /// is another thing that silently gets it wrong.
+    ///
+    /// ```json
+    /// {
+    ///   "run": [
+    ///     { "name": "hubspot", "command": "npm run dev:hubspot", "port": 3012 },
+    ///     { "name": "native",  "command": "npm run dev:native",  "port": 3013 }
+    ///   ],
+    ///   "backend": { "kind": "convex", "bundled": true, "local": true },
+    ///   "framework": "next",
+    ///   "caches": [".next", ".next-native"]
+    /// }
+    /// ```
+    ///
+    /// The first `run` entry owns the row's port and status; the rest start with it and stop
+    /// with it. Every key is optional — a malformed file falls back to the old sniffing rather
+    /// than hiding the project.
+    private func readConfig(in url: URL) -> ProjectConfig? {
+        let path = url.appendingPathComponent("openport.json")
+        guard let data = try? Data(contentsOf: path),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+
+        let targets: [RunTarget] = (root["run"] as? [[String: Any]] ?? []).compactMap { entry in
+            guard let command = (entry["command"] as? String)?
+                .trimmingCharacters(in: .whitespacesAndNewlines), !command.isEmpty
+            else { return nil }
+            let name = (entry["name"] as? String)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return RunTarget(
+                name: (name?.isEmpty == false ? name! : command),
+                command: command,
+                port: entry["port"] as? Int
+            )
+        }
+
+        var backend: BackendInfo?
+        if let raw = root["backend"] as? [String: Any] {
+            let kind = (raw["kind"] as? String).flatMap { BackendKind(rawValue: $0.lowercased()) }
+            let command = (raw["command"] as? String)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            backend = BackendInfo(
+                kind: kind,
+                bundled: raw["bundled"] as? Bool ?? false,
+                // Default true only when a kind is declared: saying "convex" and nothing else
+                // means a real backend exists, and claiming it's cloud-hosted would be a guess.
+                needsLocal: raw["local"] as? Bool ?? (kind != nil),
+                command: (command?.isEmpty == false) ? command : nil
+            )
+        }
+
+        return ProjectConfig(
+            runTargets: targets,
+            backend: backend,
+            framework: (root["framework"] as? String)?.lowercased(),
+            cacheDirs: (root["caches"] as? [String]) ?? []
+        )
     }
 
     /// Works out whether a project depends on a Convex/Supabase backend, whether its
