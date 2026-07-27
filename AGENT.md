@@ -12,14 +12,20 @@ No Xcode. Built entirely with Swift Package Manager.
 
 1. Commit all changes to main first
 2. `./build-app.sh` — rebuilds the app AND auto-generates `Sources/LocalhostApp/AppVersion.swift` with the current Malaysia time (MYT). The version appears in the app footer.
-3. Kill and relaunch: `pkill -x "OpenPort" 2>/dev/null; sleep 1; open "dist/OpenPort.app"`
+3. Kill and relaunch: `pkill -x LocalhostApp 2>/dev/null; sleep 1; open "dist/OpenPort.app"`
+
+   The running process is named **`LocalhostApp`** (the SPM product), not `OpenPort` — the
+   bundle is what's called OpenPort. `pkill -x "OpenPort"` matches nothing and exits silently,
+   and then `open` just fronts the instance that's already running, so you sit there testing
+   the old build and wondering why your change didn't land. Verify with `pgrep -lx LocalhostApp`
+   before and after: the PID must change.
 4. Only commit + push + upload release when user says "push"
 
 Do not ask. Just do it every time, in that order.
 
 Build + relaunch one-liner (always use absolute path for open — shell cwd resets between commands):
 ```bash
-cd /Users/slm/my-portfolio/localhost-3000 && bash build-app.sh 2>&1 | tail -4 && pkill -x "OpenPort" 2>/dev/null; sleep 1 && open "/Users/slm/my-portfolio/localhost-3000/dist/OpenPort.app"
+cd /Users/slm/my-portfolio/localhost-3000 && bash build-app.sh 2>&1 | tail -4 && pkill -x LocalhostApp 2>/dev/null; sleep 1 && open "/Users/slm/my-portfolio/localhost-3000/dist/OpenPort.app" && sleep 2 && pgrep -lx LocalhostApp
 ```
 
 Push one-liner (only when user says push):
