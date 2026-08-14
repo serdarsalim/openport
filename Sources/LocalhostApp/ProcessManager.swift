@@ -248,8 +248,8 @@ final class ProcessManager {
     /// If a passthrough `--` is already present, a second one would land in the script's
     /// positional args — append the flag to the existing group instead.
     private static func appendFlag(_ flag: String, to command: String, viaNpm: Bool) -> String {
-        guard viaNpm, !command.contains(" -- ") else {
-            return viaNpm ? "\(command) -- \(flag)" : "\(command) \(flag)"
+        if viaNpm && !command.contains(" -- ") {
+            return "\(command) -- \(flag)"
         }
         return "\(command) \(flag)"
     }
