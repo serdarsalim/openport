@@ -22,6 +22,7 @@ final class AppModel: ObservableObject {
         }
         processManager.onTerminated = { [weak self] name in
             guard let self else { return }
+            self.pendingBrowserOpen.remove(name)
             self.update(name) { app in
                 app.isRunning = false
                 app.portStatus = .crashed
@@ -43,6 +44,71 @@ final class AppModel: ObservableObject {
         if defaults.bool(forKey: "launcherEnabled") {
             launcherServer.start()
         }
+        startPolling()
+    }
+
+    deinit {
+        pollTask?.cancel()
+    }
+
+    // MARK: - Status polling
+
+    private var pollTask: Task<Void, Never>?
+    private var pollTicks = 0
+
+    /// Apps started via Play whose browser tab we still owe the user. Opening on click would
+    /// show a dead page for the ~20s a Convex + Next stack needs; we open when the port answers.
+    private var pendingBrowserOpen: Set<String> = []
+
+    var openBrowserOnReady: Bool {
+        get { defaults.object(forKey: "openBrowserOnReady") == nil ? true : defaults.bool(forKey: "openBrowserOnReady") }
+        set { defaults.set(newValue, forKey: "openBrowserOnReady") }
+    }
+
+    /// Flip a row to .running and, if this run still owes a browser tab, open it now.
+    private func markRunning(_ name: String, port: Int) {
+        update(name) { $0.portStatus = .running }
+        if pendingBrowserOpen.remove(name) != nil, openBrowserOnReady {
+            SystemClient.openBrowser(port: port)
+        }
+        refreshLauncher()
+    }
+
+    /// The dashboard is only trustworthy if it tracks reality without being asked. Every 3s
+    /// we probe the ports of apps we started (a connect() each — negligible); every 4th tick
+    /// we run a full quiet refresh, which adopts mismatched ports via lsof (a Vite that booted
+    /// on 5173 while we assigned 3015) and picks up servers started or stopped in a terminal.
+    private func startPolling() {
+        pollTask?.cancel()
+        pollTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                await self?.pollTick()
+            }
+        }
+    }
+
+    private func pollTick() async {
+        guard !apps.isEmpty else { return }
+        pollTicks += 1
+
+        for app in apps where app.isRunning {
+            let port = app.detectedPort ?? app.port
+            let listening = await Task.detached { SystemClient.isPortListening(port) }.value
+            // The process may have exited while we probed — .crashed belongs to the
+            // termination handler alone, so only adjust status while it's still alive.
+            guard processManager.isRunning(name: app.name) else { continue }
+            if listening, app.portStatus != .running {
+                markRunning(app.name, port: port)
+            } else if !listening, app.portStatus == .running {
+                // Port dropped but the process lives — a dev server mid-restart, not a crash.
+                update(app.name) { $0.portStatus = .starting; $0.detectedPort = nil }
+            }
+        }
+
+        if pollTicks % 4 == 0 {
+            await refresh(quiet: true)
+        }
     }
 
     func setPortfolioRoot(_ url: URL) {
@@ -51,10 +117,16 @@ final class AppModel: ObservableObject {
         Task { await refresh() }
     }
 
-    func refresh() async {
-        guard let root = portfolioRoot else { return }
-        isLoading = true
-        defer { isLoading = false }
+    private var refreshInFlight = false
+
+    func refresh(quiet: Bool = false) async {
+        guard let root = portfolioRoot, !refreshInFlight else { return }
+        refreshInFlight = true
+        if !quiet { isLoading = true }
+        defer {
+            refreshInFlight = false
+            if !quiet { isLoading = false }
+        }
 
         let scanner = AppScanner(portfolioRoot: root)
         let scanned = scanner.scanWithPorts()
@@ -71,6 +143,10 @@ final class AppModel: ObservableObject {
             guard let n = item.devScriptName else { return nil }
             return (item.name, n)
         })
+        let sniffScripts = Dictionary(uniqueKeysWithValues: scanned.compactMap { item -> (String, String)? in
+            guard let s = item.sniffScript else { return nil }
+            return (item.name, s)
+        })
         let scannedByName = Dictionary(uniqueKeysWithValues: scanned.map { ($0.name, $0) })
         let declaredPorts = Dictionary(uniqueKeysWithValues: scanned.compactMap { item -> (String, Int)? in
             guard let p = item.declaredPort else { return nil }
@@ -79,16 +155,6 @@ final class AppModel: ObservableObject {
         let ports = portStore.assign(to: appNames, scriptPorts: scriptPorts, declaredPorts: declaredPorts)
         let goAliases = goLinkStore.load()
         let runningNames = Set(appNames.filter { processManager.isRunning(name: $0) })
-
-        async let gitTask = withTaskGroup(of: (String, GitStatus).self) { group in
-            for name in appNames {
-                let appDir = root.appendingPathComponent(name)
-                group.addTask { (name, await GitClient.status(at: appDir)) }
-            }
-            var r: [String: GitStatus] = [:]
-            for await (name, git) in group { r[name] = git }
-            return r
-        }
 
         async let portTask = withTaskGroup(of: (String, Bool).self) { group in
             for name in appNames {
@@ -102,7 +168,12 @@ final class AppModel: ObservableObject {
 
         async let detectTask = Task.detached { SystemClient.detectRunningServers() }.value
 
-        let (gitStatuses, portListening, detected) = await (gitTask, portTask, detectTask)
+        let (portListening, detected) = await (portTask, detectTask)
+
+        // Rebuilding the array must not amnesia away state that only lives in it: a crash
+        // (status + log) and the start timestamp would otherwise vanish on the next quiet
+        // poll refresh, 12 seconds after the user needed to see them.
+        let previous = Dictionary(uniqueKeysWithValues: apps.map { ($0.name, $0) })
 
         // Group all detected listeners by their cwd. One cwd may have many ports.
         var detectedByDir: [String: [DetectedServer]] = [:]
@@ -136,12 +207,24 @@ final class AppModel: ObservableObject {
 
             if weStartedIt && assignedPortListening {
                 status = .running; detectedPort = nil; externalPID = nil
-            } else if weStartedIt && !assignedPortListening {
-                status = .crashed; detectedPort = nil; externalPID = nil
+            } else if weStartedIt {
+                // Our process is alive but the assigned port isn't bound. Either it's still
+                // booting (Convex + Next take ~20s cold) or it bound a different port (Vite
+                // ignores PORT env). Adopt any listener in this app's directory; otherwise
+                // it's starting — a crash is only ever declared by the termination handler.
+                if let server = primary {
+                    status = .running; detectedPort = server.port; externalPID = nil
+                } else {
+                    status = .starting; detectedPort = nil; externalPID = nil
+                }
             } else if let server = primary {
                 status = .detached; detectedPort = server.port; externalPID = server.pid
             } else if assignedPortListening {
                 status = .external; detectedPort = nil; externalPID = nil
+            } else if previous[name]?.portStatus == .crashed {
+                // The process died and nothing else took the port — the crash (and its log)
+                // stays on the row until the user restarts or stops it.
+                status = .crashed; detectedPort = nil; externalPID = nil
             } else {
                 status = .free; detectedPort = nil; externalPID = nil
             }
@@ -160,15 +243,17 @@ final class AppModel: ObservableObject {
                 detectedPort: detectedPort,
                 externalPID: externalPID,
                 goAlias: goAlias,
-                gitStatus: gitStatuses[name] ?? .unknown,
                 devScript: devScripts[name],
                 devScriptName: devScriptNames[name],
+                sniffScript: sniffScripts[name],
                 backendKind: scannedApp?.backendKind,
                 backendBundled: scannedApp?.backendBundled ?? false,
                 backendNeedsLocal: scannedApp?.backendNeedsLocal ?? false,
                 backendCommand: scannedApp?.backendCommand,
                 backendRunning: processManager.isBackendRunning(name: name),
                 nodeNote: nodeNote,
+                crashLog: status == .crashed ? previous[name]?.crashLog : nil,
+                startedAt: weStartedIt ? previous[name]?.startedAt : nil,
                 extraPorts: extras,
                 runTargets: scannedApp?.runTargets ?? [],
                 declaredFramework: scannedApp?.framework,
@@ -187,6 +272,13 @@ final class AppModel: ObservableObject {
 
         refreshProxyRoutes()
         refreshLauncher()
+
+        // A quiet refresh may be the first to see a started app answering (possibly on an
+        // adopted port a full lsof sweep just discovered) — settle the owed browser tab here too.
+        for app in apps where app.isRunning && app.portStatus == .running && pendingBrowserOpen.contains(app.name) {
+            pendingBrowserOpen.remove(app.name)
+            if openBrowserOnReady { SystemClient.openBrowser(port: app.detectedPort ?? app.port) }
+        }
     }
 
     /// Hide listeners that aren't user dev servers — system daemons, Mac apps,
@@ -236,6 +328,7 @@ final class AppModel: ObservableObject {
             in: root.appendingPathComponent(app.name),
             devScript: app.devScript,
             devScriptName: app.devScriptName,
+            sniffScript: app.sniffScript,
             primaryCommand: app.primaryTarget?.command,
             sidecars: app.sidecarTargets,
             backendCommand: app.needsSidecar ? app.backendCommand : nil,
@@ -244,10 +337,15 @@ final class AppModel: ObservableObject {
             declaredFramework: app.declaredFramework
         )
         update(app.name) {
+            // .starting, not .running — Convex + Next stacks take ~20s to bind their port,
+            // and claiming "running" for a port nobody serves is how the globe button opens
+            // a dead tab. The status poll flips it to .running the moment a port answers.
             $0.isRunning = true
-            $0.portStatus = .running
+            $0.portStatus = .starting
+            $0.startedAt = Date()
             $0.backendRunning = app.needsSidecar || !app.sidecarTargets.isEmpty
         }
+        pendingBrowserOpen.insert(app.name)
         refreshProxyRoutes()
         refreshLauncher()
     }
@@ -259,7 +357,7 @@ final class AppModel: ObservableObject {
     func cleanRestart(app: DevApp) {
         guard let root = portfolioRoot else { return }
         let dir = root.appendingPathComponent(app.name)
-        let framework = ProcessManager.detectFramework(devScript: app.devScript, declared: app.declaredFramework)
+        let framework = ProcessManager.detectFramework(devScript: app.sniffScript ?? app.devScript, declared: app.declaredFramework)
         let extraCaches = app.declaredCaches
         let port = app.detectedPort ?? app.port
         let sidecarPorts = app.sidecarTargets.compactMap(\.port)
@@ -297,6 +395,7 @@ final class AppModel: ObservableObject {
     }
 
     func stop(app: DevApp) {
+        pendingBrowserOpen.remove(app.name)
         if app.isRunning {
             processManager.stop(name: app.name)
         } else if let pid = app.externalPID {
@@ -318,6 +417,7 @@ final class AppModel: ObservableObject {
     }
 
     func stopAll() {
+        pendingBrowserOpen.removeAll()
         processManager.stopAll()
 
         // Stays scoped to listed apps — orphans are deliberately untouched.

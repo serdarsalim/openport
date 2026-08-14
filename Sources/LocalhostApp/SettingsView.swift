@@ -15,6 +15,7 @@ struct SettingsView: View {
     @AppStorage("showActionFinder") private var showActionFinder = true
     @AppStorage("showActionLogs") private var showActionLogs = true
     @AppStorage("useExternalTerminal") private var useExternalTerminal = false
+    @AppStorage("openBrowserOnReady") private var openBrowserOnReady = true
     @AppStorage("terminalTheme") private var terminalTheme = TerminalThemeID.system.rawValue
     @AppStorage("terminalFontSize") private var terminalFontSize: Double = 13
     @AppStorage("lastSeenChangelogVersion") private var lastSeenChangelogVersion = ""
@@ -169,6 +170,12 @@ struct SettingsView: View {
             portfolioRow
             Divider()
             appearanceRow
+            Divider()
+            settingRow(
+                title: "Open browser when ready",
+                subtitle: "After you press Run, open the app in your browser the moment its port answers.",
+                binding: $openBrowserOnReady
+            )
             Divider()
             settingRow(
                 title: "Launch at startup",

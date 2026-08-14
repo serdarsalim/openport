@@ -359,8 +359,8 @@ struct DashboardView: View {
                 }
                 Text("Port")
                     .frame(width: 90, alignment: .leading)
-                Text("Git")
-                    .frame(width: 70, alignment: .leading)
+                Text("Status")
+                    .frame(width: 110, alignment: .leading)
                 Spacer()
             }
             .padding(.horizontal, 10)

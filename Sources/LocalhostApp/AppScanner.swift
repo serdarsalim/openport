@@ -15,6 +15,7 @@ struct AppScanner: Sendable {
         let scriptPort: Int?
         let devScript: String?
         let devScriptName: String?      // npm script name to run for the frontend (dev or dev:frontend)
+        let sniffScript: String?        // devScript + expanded `npm run X` references, for framework detection only
         let backendKind: BackendKind?   // Convex / Supabase, if the project has one
         let backendBundled: Bool        // the frontend dev script already starts the backend
         let backendNeedsLocal: Bool     // backend runs as a local process (vs a cloud connection)
@@ -75,6 +76,7 @@ struct AppScanner: Sendable {
                 scriptPort: config?.runTargets.first?.port ?? devScript.flatMap(extractPort),
                 devScript: devScript,
                 devScriptName: devScriptName,
+                sniffScript: devScript.map { Self.expandScriptReferences($0, scripts: scripts) },
                 backendKind: backend.kind,
                 backendBundled: backend.bundled,
                 backendNeedsLocal: backend.needsLocal,
@@ -221,6 +223,26 @@ struct AppScanner: Sendable {
                 value = value.trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
                 if result[key] == nil { result[key] = value }
             }
+        }
+        return result
+    }
+
+    /// Appends the bodies of any `npm run X` scripts a dev script references, so framework
+    /// sniffing can see through one level of indirection. A wrapper like
+    /// `convex dev --start "npm run dev:frontend"` says nothing about the framework — the
+    /// referenced script (`"dev:frontend": "vite"`) does. The result is for detection only;
+    /// it is never executed.
+    static func expandScriptReferences(_ script: String, scripts: [String: Any], depth: Int = 0) -> String {
+        guard depth < 3,
+              let regex = try? NSRegularExpression(pattern: #"npm run ([A-Za-z0-9:._-]+)"#)
+        else { return script }
+        var result = script
+        let range = NSRange(script.startIndex..., in: script)
+        for match in regex.matches(in: script, range: range) {
+            guard let nameRange = Range(match.range(at: 1), in: script),
+                  let referenced = scripts[String(script[nameRange])] as? String
+            else { continue }
+            result += " " + expandScriptReferences(referenced, scripts: scripts, depth: depth + 1)
         }
         return result
     }

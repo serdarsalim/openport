@@ -40,7 +40,7 @@ struct AppRowView: View {
             appName
             if goLinksEnabled { goLinkBadge }
             portBadge
-            gitBadge
+            statusBadge
             Spacer(minLength: 24)
             actionButtons
         }
@@ -68,7 +68,8 @@ struct AppRowView: View {
     /// The framework cache this app's dev server reuses between runs (e.g. ".next"). nil when
     /// we don't recognize the framework — we hide Clean Restart rather than offer a no-op.
     private var cacheLabel: String? {
-        ProcessManager.cacheDirs(for: ProcessManager.detectFramework(devScript: app.devScript)).first
+        ProcessManager.cacheDirs(for: ProcessManager.detectFramework(
+            devScript: app.sniffScript ?? app.devScript, declared: app.declaredFramework)).first
     }
 
     private var appName: some View {
@@ -300,30 +301,55 @@ struct AppRowView: View {
         portDraft = "\(next)"
     }
 
-    private var gitBadge: some View {
+    /// Live truth about the server, not about what we asked for. "starting" carries a
+    /// relative timestamp because the useful question during a slow Convex boot is
+    /// "is it 5 seconds in or stuck for 2 minutes?"
+    private var statusBadge: some View {
         Group {
-            if app.gitStatus.isRepo {
-                if app.gitStatus.uncommittedCount > 0 {
-                    Label("\(app.gitStatus.uncommittedCount)", systemImage: "exclamationmark.circle.fill")
-                        .labelStyle(.titleAndIcon)
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                        .help("\(app.gitStatus.uncommittedCount) uncommitted changes")
-                } else {
-                    Label("Clean", systemImage: "checkmark.circle.fill")
-                        .labelStyle(.titleAndIcon)
-                        .font(.caption)
-                        .foregroundStyle(.green)
+            switch app.portStatus {
+            case .starting:
+                HStack(spacing: 5) {
+                    ProgressView().controlSize(.mini)
+                    if let started = app.startedAt {
+                        Text("starting · \(Text(started, style: .relative))")
+                    } else {
+                        Text("starting…")
+                    }
                 }
-            } else {
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .help("Process is up, waiting for the port to answer. The browser opens itself when it does.")
+            case .running:
+                Label("running", systemImage: "circle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.green)
+                    .help("Serving on port \(app.detectedPort ?? app.port)")
+            case .detached:
+                Label("terminal", systemImage: "circle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.green)
+                    .help("Running, but started outside OpenPort (e.g. from a terminal)")
+            case .crashed:
+                Label("crashed", systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .help(app.crashLog != nil ? "The process exited unexpectedly — click ⚠ next to Stop for the log" : "The process exited unexpectedly")
+            case .external:
+                Label("port busy", systemImage: "circle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .help("Another project is using port \(app.port)")
+            case .free:
                 Text("—").foregroundStyle(.tertiary).font(.caption)
             }
         }
-        .frame(width: 70, alignment: .leading)
+        .frame(width: 110, alignment: .leading)
     }
 
     private var activePort: Int { app.detectedPort ?? app.port }
-    private var isActive: Bool { app.isRunning || app.portStatus == .detached }
+    /// Browser/copy/QR only make sense once something actually answers on the port —
+    /// during .starting they'd hand out a dead URL.
+    private var isActive: Bool { app.portStatus == .running || app.portStatus == .detached }
 
     private var actionButtons: some View {
         HStack(spacing: 8) {

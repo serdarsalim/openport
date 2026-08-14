@@ -2,6 +2,7 @@ import Foundation
 
 enum PortStatus: Sendable, Hashable {
     case free      // stopped, port available
+    case starting  // we started it, process alive, no port bound yet
     case running   // we started it, port is responding
     case detached  // running in this project's directory but started outside the app
     case external  // something else is on the assigned port (different project)
@@ -43,9 +44,9 @@ struct DevApp: Identifiable, Sendable, Hashable {
     var detectedPort: Int?   // actual port the server bound to (may differ from assigned)
     var externalPID: Int32?  // PID of a detached process we can kill
     var goAlias: String      // alias used in go/<alias> routing
-    var gitStatus: GitStatus
     var devScript: String?           // raw dev script string, used to patch port at launch
     var devScriptName: String?       // npm script name to invoke (e.g. "dev" or "dev:frontend")
+    var sniffScript: String?         // devScript with `npm run X` references expanded — detection only, never run
 
     // Backend (Convex / Supabase) the project needs running with the frontend.
     var backendKind: BackendKind? = nil  // detected backend, if any
@@ -63,6 +64,7 @@ struct DevApp: Identifiable, Sendable, Hashable {
     var backendUnstarted: Bool { hasBackend && !backendBundled && backendNeedsLocal && backendCommand == nil }
 
     var crashLog: String? = nil     // last stderr output captured on unexpected exit
+    var startedAt: Date? = nil      // when we pressed play — drives the "starting for Ns" hint
     var extraPorts: [DetectedPort] = [] // additional ports bound by this app's cwd
 
     // Declared in openport.json. Empty means we fell back to reading package.json.
@@ -91,11 +93,4 @@ struct OrphanPort: Identifiable, Sendable, Hashable {
     let port: Int
     let directory: String
     let command: String
-}
-
-struct GitStatus: Sendable, Hashable {
-    var isRepo: Bool
-    var uncommittedCount: Int
-
-    static let unknown = GitStatus(isRepo: false, uncommittedCount: 0)
 }

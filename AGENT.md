@@ -129,12 +129,51 @@ Uses `/bin/zsh -c "exec npm run dev"` with PATH set to include `/opt/homebrew/bi
 
 ### PortStatus enum
 `.free` — stopped, port available
+`.starting` — started by this app, process alive, port not bound yet
 `.running` — started by this app, port listening
 `.detached` — started externally, detected by lsof
 `.external` — port in use by an unrelated process
 `.crashed` — was started by app but stopped unexpectedly
 
 Port number turns **orange** in the UI when status is `.external`.
+
+**`.crashed` is owned by the ProcessManager termination handler alone.** Never mark crashed
+from a port probe: a Convex + Next stack takes ~20s to bind its port, and "started but port
+not listening" is `.starting`, not a crash. This misdiagnosis was the original "Play is
+unreliable" bug.
+
+### Status polling (AppModel)
+`startPolling()` runs forever: every 3s it probes the ports of apps we started (raw
+`connect()`, negligible); every 4th tick it calls `refresh(quiet: true)` — full lsof sweep
+that adopts a mismatched real port into `detectedPort` and syncs rows for servers
+started/stopped in a terminal. `refresh()` preserves `.crashed` + `crashLog` + `startedAt`
+from the previous apps array — rebuilding the array must not amnesia away state that only
+lives in it. `refreshInFlight` guards manual vs. quiet overlap.
+
+### Auto-open on ready
+Play inserts the app into `pendingBrowserOpen`; the first poll/refresh that sees the port
+answer opens the browser once (`openBrowserOnReady`, Settings → General, default on).
+Crash/stop clears the pending flag so a failed boot doesn't open a dead tab later.
+
+### Vite and ports — the one framework that ignores PORT
+Vite reads neither `PORT` nor `VITE_PORT` (we still set both for apps whose config reads
+them). For sniffed Vite projects the port travels as a CLI flag: `npm run dev -- --port N
+--strictPort`, or — when the dev script wraps the frontend (`convex dev --start "npm run
+dev:frontend"`) — the script body is run directly with the flag threaded into the quoted
+inner command (`applyPortBinding`, wrapper-aware for both quote styles, npm-aware for
+inner `npm run` commands). `--strictPort` makes a collision fail loudly in the logs
+instead of silently drifting to 5173. Declared (openport.json) commands stay verbatim.
+
+Framework sniffing sees through one level of `npm run X` indirection:
+`AppScanner.expandScriptReferences` appends referenced script bodies into `sniffScript`
+(detection only, never executed) — that's how `convex dev --start "npm run dev:frontend"`
+with `"dev:frontend": "vite"` is recognized as Vite.
+
+### No Git column
+Removed deliberately (user never used it) along with GitClient — a git subprocess per
+project per refresh was the most expensive part of refresh, untenable at a 12s auto-refresh
+cadence. The column is now Status (starting/running/terminal/crashed/port busy), which is
+what the user actually watches. Don't reintroduce git status.
 
 ### go/ links architecture
 Three-layer stack:

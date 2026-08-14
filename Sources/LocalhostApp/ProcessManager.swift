@@ -16,6 +16,7 @@ final class ProcessManager {
         in directory: URL,
         devScript: String? = nil,
         devScriptName: String? = nil,
+        sniffScript: String? = nil,
         primaryCommand: String? = nil,
         sidecars: [RunTarget] = [],
         backendCommand: String? = nil,
@@ -25,7 +26,7 @@ final class ProcessManager {
     ) {
         guard !(running[name]?.isRunning == true) else { return }
 
-        let framework = Self.detectFramework(devScript: devScript, declared: declaredFramework)
+        let framework = Self.detectFramework(devScript: sniffScript ?? devScript, declared: declaredFramework)
         let env = baseEnvironment(port: port, directory: directory, convexCompat: convexCompat,
                                   bindHost: bindHost, framework: framework)
         let scriptName = devScriptName ?? "dev"
@@ -42,6 +43,20 @@ final class ProcessManager {
             base = primaryCommand; viaNpm = false; declared = true
         } else if let script = devScript, script.contains("-p") || script.contains("--port") {
             base = patchPort(in: script, to: port); viaNpm = false; declared = false
+        } else if let script = devScript, framework == .vite {
+            // Vite is the one framework that ignores PORT/VITE_PORT outright — the port must
+            // arrive as a CLI flag or it boots on 5173 while we watch the assigned port forever.
+            // A wrapped script (`convex dev --start "npm run dev:frontend"`) can't take the flag
+            // through `npm run dev --`, so we run the script body directly and thread the flag
+            // into the inner command. node_modules/.bin is already on PATH, so the semantics match.
+            if script.contains("--start") {
+                base = Self.applyPortBinding(to: script, framework: .vite, viaNpm: false, port: port)
+                viaNpm = false
+            } else {
+                base = Self.applyPortBinding(to: "npm run \(scriptName)", framework: .vite, viaNpm: true, port: port)
+                viaNpm = true
+            }
+            declared = false
         } else {
             base = "npm run \(scriptName)"; viaNpm = true; declared = false
         }
@@ -215,28 +230,67 @@ final class ProcessManager {
         }
     }
 
+    /// When the frontend runs inside a wrapper like `convex dev --start 'next dev …'` or
+    /// `convex dev --start "npm run dev:frontend"`, flags belong on the inner command, not
+    /// the wrapper — otherwise Convex (or whatever launches the dev server) receives them
+    /// and aborts. Returns the quoted inner command's range, or nil when there's no wrapper.
+    private static func wrappedInnerRange(of command: String) -> Range<String.Index>? {
+        for quote: Character in ["'", "\""] {
+            if let open = command.range(of: "--start \(quote)"),
+               let close = command[open.upperBound...].firstIndex(of: quote) {
+                return open.upperBound..<close
+            }
+        }
+        return nil
+    }
+
+    /// Append a flag, threading it through `npm run … --` when the command is an npm script.
+    /// If a passthrough `--` is already present, a second one would land in the script's
+    /// positional args — append the flag to the existing group instead.
+    private static func appendFlag(_ flag: String, to command: String, viaNpm: Bool) -> String {
+        guard viaNpm, !command.contains(" -- ") else {
+            return viaNpm ? "\(command) -- \(flag)" : "\(command) \(flag)"
+        }
+        return "\(command) \(flag)"
+    }
+
     /// Append the right host flag for the framework. Vite and Next take a CLI flag (passed
     /// through `npm run … --` when invoked via npm); CRA/unknown rely on the HOST env var.
     static func applyHostBinding(to command: String, framework: Framework, viaNpm: Bool) -> String {
-        // When the frontend runs inside a wrapper like `convex dev --start 'next dev …'`,
-        // the host flag belongs on the inner command, not the wrapper — otherwise Convex
-        // (or whatever launches the dev server) receives `-H` and aborts. Inject into the
-        // quoted sub-command and re-wrap.
-        if let open = command.range(of: "--start '"),
-           let close = command[open.upperBound...].firstIndex(of: "'") {
-            let inner = String(command[open.upperBound..<close])
-            let patched = applyHostBinding(to: inner, framework: framework, viaNpm: false)
-            return String(command[..<open.upperBound]) + patched + String(command[close...])
+        if let innerRange = wrappedInnerRange(of: command) {
+            let inner = String(command[innerRange])
+            let patched = applyHostBinding(to: inner, framework: framework,
+                                           viaNpm: inner.hasPrefix("npm run "))
+            return command.replacingCharacters(in: innerRange, with: patched)
         }
         switch framework {
         case .vite:
             if command.contains("--host") { return command }
-            return viaNpm ? "\(command) -- --host" : "\(command) --host"
+            return appendFlag("--host", to: command, viaNpm: viaNpm)
         case .next:
             if command.contains("-H ") || command.contains("--hostname") { return command }
-            return viaNpm ? "\(command) -- -H 0.0.0.0" : "\(command) -H 0.0.0.0"
+            return appendFlag("-H 0.0.0.0", to: command, viaNpm: viaNpm)
         case .cra, .unknown:
             return command  // handled via HOST in the environment
+        }
+    }
+
+    /// Append the port flag for frameworks that won't take it from the environment.
+    /// Only Vite needs this (Next and CRA read PORT); `--strictPort` makes a collision fail
+    /// loudly in the logs instead of silently drifting to the next free port.
+    static func applyPortBinding(to command: String, framework: Framework, viaNpm: Bool, port: Int) -> String {
+        if let innerRange = wrappedInnerRange(of: command) {
+            let inner = String(command[innerRange])
+            let patched = applyPortBinding(to: inner, framework: framework,
+                                           viaNpm: inner.hasPrefix("npm run "), port: port)
+            return command.replacingCharacters(in: innerRange, with: patched)
+        }
+        switch framework {
+        case .vite:
+            if command.contains("--port") { return command }
+            return appendFlag("--port \(port) --strictPort", to: command, viaNpm: viaNpm)
+        case .next, .cra, .unknown:
+            return command  // PORT env is respected
         }
     }
 

@@ -12,6 +12,17 @@ enum Changelog {
     /// Date format: yyyy-MM-dd.
     static let entries: [ChangelogEntry] = [
         ChangelogEntry(
+            version: "1.6.0",
+            date: "2026-08-14",
+            items: [
+                "Run is now honest — pressing Run shows \"starting\" with a live timer instead of claiming the app is up. A Convex + Next stack takes ~20 seconds to bind its port; OpenPort used to flag exactly that window as crashed. Crashed now means one thing only: the process actually died (and the log tells you why).",
+                "The dashboard watches itself — statuses poll every few seconds, and every ~12s a full sweep adopts whatever port the server really bound and notices servers you started or stopped in a terminal. No more hitting refresh to learn the truth.",
+                "Vite finally obeys its port — Vite ignores the PORT env var entirely, so a Vite app always booted on 5173 while OpenPort watched the assigned port. The port now travels as a --port flag (with --strictPort so collisions fail loudly), threaded through convex dev --start wrappers too. Framework detection also sees through npm-run indirection, so convex dev --start \"npm run dev:frontend\" is recognized as Vite.",
+                "Opens when ready — after you press Run, the browser opens the app the moment its port answers, instead of you clicking the globe into a dead tab. Toggle in Settings → General.",
+                "Status column replaces Git — starting / running / terminal / crashed / port busy, live. The Git column is gone (and with it a git call per project per refresh)."
+            ]
+        ),
+        ChangelogEntry(
             version: "1.5.0",
             date: "2026-07-27",
             items: [
