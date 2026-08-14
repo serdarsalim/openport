@@ -32,12 +32,16 @@ struct LocalhostApp: App {
 }
 
 @MainActor
-class AppDelegate: NSObject, NSApplicationDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     let model = AppModel()
     let terminalStore = TerminalSessionStore()
     let theme = ThemeController()
     private var statusItem: NSStatusItem?
     private var cancellables = Set<AnyCancellable>()
+    // The status poll mutates model.apps every few seconds; rebuilding the menu while the
+    // user has it open would yank it shut mid-read. Defer until it closes.
+    private var menuIsOpen = false
+    private var pendingMenuRebuild = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
@@ -73,6 +77,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         rebuildMenu()
     }
 
+    func menuWillOpen(_ menu: NSMenu) { menuIsOpen = true }
+
+    func menuDidClose(_ menu: NSMenu) {
+        menuIsOpen = false
+        if pendingMenuRebuild {
+            pendingMenuRebuild = false
+            rebuildMenu()
+        }
+    }
+
     private func rebuildMenu() {
         let quickLaunch = UserDefaults.standard.bool(forKey: "menuBarQuickLaunch")
 
@@ -82,16 +96,29 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
+        if menuIsOpen {
+            pendingMenuRebuild = true
+            return
+        }
+
         if statusItem == nil {
-            statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+            statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
             statusItem?.button?.image = NSImage(systemSymbolName: "network", accessibilityDescription: "Localhost")
         }
 
+        // Badge the icon with how many servers are up — the glance that answers
+        // "is anything running?" without even opening the menu.
+        let activeCount = model.apps.filter { $0.portStatus == .running || $0.portStatus == .detached }.count
+        statusItem?.button?.title = activeCount > 0 ? " \(activeCount)" : ""
+        statusItem?.button?.imagePosition = activeCount > 0 ? .imageLeading : .imageOnly
+
         let menu = NSMenu()
+        menu.delegate = self
 
         if !model.apps.isEmpty {
             for app in model.apps {
                 let isActive = app.isRunning || app.portStatus == .detached
+                let canOpen = app.portStatus == .running || app.portStatus == .detached
                 let port = app.detectedPort ?? app.port
                 let appName = app.name
                 let item = NSMenuItem()
@@ -99,7 +126,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     name: appName,
                     port: port,
                     isRunning: isActive,
-                    canOpenBrowser: isActive,
+                    status: app.portStatus,
+                    canOpenBrowser: canOpen,
                     onToggle: { [weak self] in
                         guard let self,
                               let target = self.model.apps.first(where: { $0.name == appName }) else { return }

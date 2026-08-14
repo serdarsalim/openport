@@ -7,11 +7,13 @@ import AppKit
 @MainActor
 final class QuickLaunchMenuItemView: NSView {
     private let isRunning: Bool
+    private let status: PortStatus
     private let onToggle: () -> Void
     private let onOpenBrowser: () -> Void
 
     private let iconView = NSImageView()
     private let nameLabel = NSTextField(labelWithString: "")
+    private let statusDot = NSView()
     private let portLabel = NSTextField(labelWithString: "")
     private let globeButton = NSButton()
 
@@ -22,10 +24,12 @@ final class QuickLaunchMenuItemView: NSView {
     init(name: String,
          port: Int,
          isRunning: Bool,
+         status: PortStatus,
          canOpenBrowser: Bool,
          onToggle: @escaping () -> Void,
          onOpenBrowser: @escaping () -> Void) {
         self.isRunning = isRunning
+        self.status = status
         self.onToggle = onToggle
         self.onOpenBrowser = onOpenBrowser
         super.init(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
@@ -35,6 +39,17 @@ final class QuickLaunchMenuItemView: NSView {
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    /// Dot color mirroring the dashboard's Status column. nil hides the dot (stopped).
+    private var statusDotColor: NSColor? {
+        switch status {
+        case .running, .detached: return NSColor(srgbRed: 0.13, green: 0.60, blue: 0.22, alpha: 1.0)
+        case .starting:           return .systemOrange
+        case .crashed:            return .systemRed
+        case .external:           return .systemOrange
+        case .free:               return nil
+        }
+    }
 
     private func setupSubviews(name: String, port: Int, canOpenBrowser: Bool) {
         let menuFontSize = NSFont.menuFont(ofSize: 0).pointSize
@@ -59,6 +74,24 @@ final class QuickLaunchMenuItemView: NSView {
         nameLabel.lineBreakMode = .byTruncatingTail
         nameLabel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(nameLabel)
+
+        // Status dot — the at-a-glance answer to "what's running" without opening the window.
+        statusDot.wantsLayer = true
+        statusDot.layer?.cornerRadius = 3.5
+        statusDot.layer?.backgroundColor = (statusDotColor ?? .clear).cgColor
+        statusDot.isHidden = statusDotColor == nil
+        statusDot.toolTip = {
+            switch status {
+            case .running:  return "Running"
+            case .detached: return "Running (started in a terminal)"
+            case .starting: return "Starting…"
+            case .crashed:  return "Crashed"
+            case .external: return "Port in use by another project"
+            case .free:     return nil
+            }
+        }()
+        statusDot.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(statusDot)
 
         // Port (monospaced digits, right-aligned)
         portLabel.stringValue = ":\(port)"
@@ -91,7 +124,12 @@ final class QuickLaunchMenuItemView: NSView {
 
             nameLabel.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 8),
             nameLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: portLabel.leadingAnchor, constant: -12),
+            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: statusDot.leadingAnchor, constant: -8),
+
+            statusDot.trailingAnchor.constraint(equalTo: portLabel.leadingAnchor, constant: -8),
+            statusDot.centerYAnchor.constraint(equalTo: centerYAnchor),
+            statusDot.widthAnchor.constraint(equalToConstant: 7),
+            statusDot.heightAnchor.constraint(equalToConstant: 7),
 
             portLabel.trailingAnchor.constraint(equalTo: globeButton.leadingAnchor, constant: -12),
             portLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 60),

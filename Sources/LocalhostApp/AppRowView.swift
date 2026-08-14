@@ -353,6 +353,15 @@ struct AppRowView: View {
 
     private var actionButtons: some View {
         HStack(spacing: 8) {
+            if app.isRunning || app.portStatus == .detached || app.portStatus == .crashed {
+                Button { model.restart(app: app) } label: {
+                    Image(systemName: "arrow.clockwise.circle.fill")
+                }
+                .help("Restart — stop, wait for the ports to free, start again")
+                .buttonStyle(.plain)
+                .foregroundStyle(.orange)
+            }
+
             if isActive {
                 if showActionBrowser {
                     Button {

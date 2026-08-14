@@ -19,7 +19,9 @@ enum Changelog {
                 "The dashboard watches itself — statuses poll every few seconds, and every ~12s a full sweep adopts whatever port the server really bound and notices servers you started or stopped in a terminal. No more hitting refresh to learn the truth.",
                 "Vite finally obeys its port — Vite ignores the PORT env var entirely, so a Vite app always booted on 5173 while OpenPort watched the assigned port. The port now travels as a --port flag (with --strictPort so collisions fail loudly), threaded through convex dev --start wrappers too. Framework detection also sees through npm-run indirection, so convex dev --start \"npm run dev:frontend\" is recognized as Vite.",
                 "Opens when ready — after you press Run, the browser opens the app the moment its port answers, instead of you clicking the globe into a dead tab. Toggle in Settings → General.",
-                "Status column replaces Git — starting / running / terminal / crashed / port busy, live. The Git column is gone (and with it a git call per project per refresh)."
+                "Status column replaces Git — starting / running / terminal / crashed / port busy, live. The Git column is gone (and with it a git call per project per refresh).",
+                "Restart button — one click stops the app, waits until its ports are actually free, and starts it again. Works on crashed rows and terminal-started servers too. Clean Restart (right-click) still does the same plus a cache wipe.",
+                "Menu bar tells the truth at a glance — the icon shows a count of running servers, and each app in the quick-launch menu carries a live status dot (green running, orange starting, red crashed). The menu no longer rebuilds itself shut while you're reading it."
             ]
         ),
         ChangelogEntry(

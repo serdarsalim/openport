@@ -350,18 +350,31 @@ final class AppModel: ObservableObject {
         refreshLauncher()
     }
 
+    /// Plain restart: stop, wait for the ports to actually free, start again. Replaces the
+    /// manual Stop → wait → Play dance. Works on detached (terminal-started) servers too.
+    func restart(app: DevApp) {
+        stopAndRelaunch(app: app, wipeCaches: false)
+    }
+
     /// Stop, wipe the framework's build cache, then start fresh. Cures the case where a dev
     /// server wedges on compile (pegged CPU, port open but never responds) and a plain restart
     /// doesn't help because it reuses the poisoned cache. No-op cache-wise for frameworks we
     /// don't recognize, in which case it's just a restart.
     func cleanRestart(app: DevApp) {
+        stopAndRelaunch(app: app, wipeCaches: true)
+    }
+
+    private func stopAndRelaunch(app: DevApp, wipeCaches: Bool) {
         guard let root = portfolioRoot else { return }
         let dir = root.appendingPathComponent(app.name)
         let framework = ProcessManager.detectFramework(devScript: app.sniffScript ?? app.devScript, declared: app.declaredFramework)
         let extraCaches = app.declaredCaches
         let port = app.detectedPort ?? app.port
         let sidecarPorts = app.sidecarTargets.compactMap(\.port)
+        let extraPids = app.extraPorts.map(\.pid)
+        let externalPID = app.externalPID
 
+        pendingBrowserOpen.remove(app.name)
         if app.isRunning { processManager.stop(name: app.name) }
         update(app.name) {
             $0.isRunning = false; $0.portStatus = .free; $0.detectedPort = nil
@@ -370,13 +383,24 @@ final class AppModel: ObservableObject {
         refreshProxyRoutes()
         refreshLauncher()
 
-        // Free the port and clear the cache off the main thread (a large .next can take a
-        // second to delete), then start fresh once it's gone.
+        // Tear down and (optionally) clear the cache off the main thread — a large .next can
+        // take a second to delete — then start once the ports are genuinely free. killTree's
+        // SIGKILL fallback fires 2s after SIGTERM, so relaunching immediately would race a
+        // dying listener and strictPort would abort the fresh boot for nothing.
         Task {
             await Task.detached(priority: .userInitiated) {
+                if let externalPID { SystemClient.killTree(pid: externalPID) }
+                for pid in extraPids { SystemClient.killTree(pid: pid) }
                 SystemClient.killPort(port)
                 for sidecarPort in sidecarPorts { SystemClient.killPort(sidecarPort) }
-                ProcessManager.clearCaches(in: dir, framework: framework, extra: extraCaches)
+                if wipeCaches {
+                    ProcessManager.clearCaches(in: dir, framework: framework, extra: extraCaches)
+                }
+                for _ in 0..<20 {
+                    let busy = ([port] + sidecarPorts).contains { SystemClient.isPortListening($0) }
+                    if !busy { break }
+                    try? await Task.sleep(nanoseconds: 500_000_000)
+                }
             }.value
             start(app: app)
         }
